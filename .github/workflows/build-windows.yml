@@ -41,7 +41,7 @@ jobs:
 
       - name: Unit tests and syntax checks
         run: |
-          python -m compileall -q main.py profiles.py mounts.py dependencies.py version.py scripts tests
+          python -m compileall -q main.py profiles.py mounts.py dependencies.py startup.py version.py scripts tests
           python -m unittest discover -s tests -v
 
       - name: Build icon

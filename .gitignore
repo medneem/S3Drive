@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+.idea/
+.vscode/
+build/
+dist/
+release/
+assets/app.ico
+assets/app.png
+windows_version_info.txt
+profiles.json
+profiles.json.tmp
+rclone.exe
+*.log

@@ -101,17 +101,42 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
     ])
 
 
+def _protect_acl(path: Path, *, directory: bool) -> None:
+    """Replace (not merge) ACL and owner to prevent service binary tampering."""
+    import win32con
+    import win32security
+    if path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
+        raise RuntimeError("Отказано: каталог службы является ссылкой или junction.")
+    system_sid = win32security.CreateWellKnownSid(
+        win32security.WinLocalSystemSid, None,
+    )
+    admin_sid = win32security.CreateWellKnownSid(
+        win32security.WinBuiltinAdministratorsSid, None,
+    )
+    acl = win32security.ACL()
+    flags = (win32con.OBJECT_INHERIT_ACE | win32con.CONTAINER_INHERIT_ACE
+             if directory else 0)
+    for sid in (system_sid, admin_sid):
+        acl.AddAccessAllowedAceEx(
+            win32security.ACL_REVISION, flags, win32con.FILE_ALL_ACCESS, sid,
+        )
+    win32security.SetNamedSecurityInfo(
+        str(path), win32security.SE_FILE_OBJECT,
+        (win32security.OWNER_SECURITY_INFORMATION
+         | win32security.DACL_SECURITY_INFORMATION
+         | win32security.PROTECTED_DACL_SECURITY_INFORMATION),
+        admin_sid, None, acl, None,
+    )
+
+
 def protect_directory(path: Path) -> None:
-    """No unprivileged writes to service executable, credentials or RC controls."""
+    """No user-writable service executable, credentials or RC controls."""
     path.mkdir(parents=True, exist_ok=True)
-    for args in (
-        ["icacls", str(path), "/inheritance:r"],
-        ["icacls", str(path), "/grant:r", "*S-1-5-18:(OI)(CI)F",
-         "*S-1-5-32-544:(OI)(CI)F"],
-    ):
-        result = subprocess.run(args, capture_output=True, text=True, check=False)
-        if result.returncode:
-            raise RuntimeError("Не удалось защитить папку службы: " + result.stderr)
+    _protect_acl(path, directory=True)
+
+
+def protect_file(path: Path) -> None:
+    _protect_acl(path, directory=False)
 
 
 def check_drive_free(drive: str) -> None:
@@ -180,17 +205,21 @@ def install_and_start(profile, source_rclone: Path) -> None:
     binary = service_executable_dir() / "rclone.exe"
     if not binary.is_file():
         shutil.copy2(source_rclone, binary)
+    protect_file(binary)
     config = dest / "rclone.conf"
     config.write_text(config_text(profile), encoding="utf-8")
+    protect_file(config)
     control_file = dest / "control.json"
     if control_file.is_file():
         control = json.loads(control_file.read_text(encoding="utf-8"))
     else:
         control = {"port": _choose_rc_port(), "password": secrets.token_urlsafe(36)}
     control_file.write_text(json.dumps(control), encoding="utf-8")
+    protect_file(control_file)
     sha = base64.b64encode(hashlib.sha1(control["password"].encode()).digest()).decode()
     htpasswd = dest / "rc.htpasswd"
     htpasswd.write_text("s3drive:{SHA}" + sha + "\n", encoding="utf-8")
+    protect_file(htpasswd)
     cache = dest / "cache"
     cache.mkdir(exist_ok=True)
     log = dest / "rclone.log"

@@ -1,0 +1,130 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  BASE_VERSION: "0.1"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-portable:
+    name: Windows x64 portable ZIP
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+
+      - name: Stamp application version
+        shell: pwsh
+        run: |
+          python scripts/stamp_version.py "$env:BASE_VERSION" "$env:GITHUB_RUN_NUMBER"
+          python -c "from version import APP_VERSION; print(APP_VERSION)"
+
+      - name: Unit tests and syntax checks
+        run: |
+          python -m compileall -q main.py profiles.py mounts.py version.py scripts tests
+          python -m unittest discover -s tests -v
+
+      - name: Build icon
+        run: python scripts/build_icon.py
+
+      - name: Build onefile EXE
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name S3Drive --version-file windows_version_info.txt --icon assets/app.ico --add-data "assets/app.svg;assets" main.py
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
+          if (-not (Test-Path "dist/S3Drive.exe" -PathType Leaf)) { throw "Missing S3Drive.exe" }
+
+      - name: Package portable ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "$env:BASE_VERSION.$env:GITHUB_RUN_NUMBER"
+          $archive = "S3Drive-v$version-windows-x64.zip"
+          $folder = "release/S3Drive"
+          New-Item -ItemType Directory -Force $folder | Out-Null
+          Copy-Item "dist/S3Drive.exe" $folder
+          Copy-Item "assets/app.png" (Join-Path $folder "app-icon.png")
+          Copy-Item "LICENSE" $folder
+          Copy-Item "THIRD_PARTY_NOTICES.md" $folder
+          Set-Content -Path (Join-Path $folder "VERSION.txt") -Value $version -Encoding utf8
+          $expected = @("S3Drive.exe", "app-icon.png", "LICENSE", "THIRD_PARTY_NOTICES.md", "VERSION.txt")
+          $files = @(Get-ChildItem -LiteralPath $folder -File)
+          if (@(Get-ChildItem -LiteralPath $folder -Directory).Count -ne 0) { throw "Unexpected subfolders" }
+          if ($files.Count -ne $expected.Count) { throw "Unexpected file count" }
+          foreach ($file in $files) {
+            if ($file.Name -notin $expected -or $file.Length -le 0) { throw "Invalid file: $($file.Name)" }
+          }
+          foreach ($name in $expected) {
+            if (-not (Test-Path (Join-Path $folder $name) -PathType Leaf)) { throw "Missing $name" }
+          }
+          Compress-Archive -Path "$folder/*" -DestinationPath $archive -CompressionLevel Optimal -Force
+          Add-Type -AssemblyName System.IO.Compression
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $archive).Path)
+          try {
+            if ($zip.Entries.Count -ne $expected.Count) { throw "Wrong ZIP item count" }
+            foreach ($entry in $zip.Entries) {
+              if ($entry.FullName -notin $expected -or $entry.Length -le 0) { throw "Unexpected ZIP entry $($entry.FullName)" }
+            }
+          } finally { $zip.Dispose() }
+
+      - name: Upload portable archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: S3Drive-v${{ env.BASE_VERSION }}.${{ github.run_number }}-windows-x64
+          path: S3Drive-v${{ env.BASE_VERSION }}.${{ github.run_number }}-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: windows-portable
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: S3Drive-v${{ env.BASE_VERSION }}.${{ github.run_number }}-windows-x64
+          path: release
+
+      - name: Create release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="v${BASE_VERSION}.${GITHUB_RUN_NUMBER}"
+          zip="release/S3Drive-${tag}-windows-x64.zip"
+          test -s "$zip"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$zip" --clobber
+          else
+            gh release create "$tag" "$zip" \
+              --target "$GITHUB_SHA" \
+              --title "S3Drive $tag" \
+              --notes "Экспериментальная Windows x64 сборка. Для работы отдельно установите WinFsp и rclone. Не используйте для хранения баз данных или активно изменяемых файлов." \
+              --latest
+          fi

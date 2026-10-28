@@ -57,7 +57,7 @@ class MountTests(unittest.TestCase):
             rclone.write_bytes(b"rclone-placeholder")
             with mock.patch.object(mounts.sys, "frozen", True, create=True):
                 with mock.patch.object(mounts.sys, "executable", str(directory / "S3Drive.exe")):
-                    self.assertEqual(mounts.find_rclone(), str(rclone))
+                    self.assertTrue(Path(mounts.find_rclone()).samefile(rclone))
 
     def test_config_is_encrypted_not_plaintext(self):
         p = sample()

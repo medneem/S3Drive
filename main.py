@@ -69,7 +69,7 @@ class MainWindow(QMainWindow):
         self.name = QLineEdit()
         self.name.setPlaceholderText("QNAP S3")
         self.endpoint = QLineEdit()
-        self.endpoint.setPlaceholderText("http://srv-nas-01:8010")
+        self.endpoint.setPlaceholderText("http://nas.local:8010")
         self.bucket = QLineEdit()
         self.bucket.setPlaceholderText("Имя бакета")
         self.access = QLineEdit()

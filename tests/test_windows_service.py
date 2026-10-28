@@ -49,7 +49,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_configuration_rejects_crlf_in_credentials(self):
         p = sample()
-        p.secret_key = "abc\\nsecret"
+        p.secret_key = "abc\nsecret"
         with self.assertRaises(ValueError):
             config_text(p)
 

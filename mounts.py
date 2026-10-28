@@ -2,17 +2,20 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import secrets
 import shutil
 import socket
 import sys
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import Request, urlopen
 
 from profiles import Profile, app_data_dir
+from background import BackgroundRecord, BackgroundRegistry
 
 REMOTE = "s3drive_mount"
 
@@ -67,25 +70,91 @@ def free_local_port() -> int:
 @dataclass
 class Session:
     profile: Profile
-    process: subprocess.Popen
+    process: subprocess.Popen | None
     port: int
     password: str
-    log_file: object
+    pid: int
+    keep_running: bool
+    log_file: object | None = None
 
 
 class MountManager:
-    def __init__(self):
+    def __init__(self, registry: BackgroundRegistry | None = None):
         self.sessions: dict[str, Session] = {}
+        self.registry = registry if registry is not None else BackgroundRegistry()
+
+    @staticmethod
+    def _rc(session: Session, method: str, timeout: float = 3) -> dict:
+        # IMPORTANT: the rclone RC API has full user-level command execution
+        # privileges. Never bind it to a non-loopback interface.
+        token = base64.b64encode(f"s3drive:{session.password}".encode()).decode()
+        request = Request(
+            f"http://127.0.0.1:{session.port}/{method}",
+            data=b"{}", method="POST",
+            headers={"Authorization": "Basic " + token, "Content-Type": "application/json"},
+        )
+        with urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def _rc_pid(self, session: Session) -> int | None:
+        try:
+            response = self._rc(session, "core/pid", timeout=0.75)
+            return int(response["pid"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def recover(self, profiles: list[Profile]) -> None:
+        """Adopt live mounts from an earlier S3Drive window (same Windows user).
+
+        We use authenticated core/pid to avoid mistaking an unrelated process
+        which happens to reuse the local port for one of ours.
+        """
+        configured = {profile.id: profile for profile in profiles}
+        for record in self.registry.load().values():
+            profile = configured.get(record.profile_id)
+            if profile is None or profile.drive != record.drive:
+                continue
+            session = Session(
+                profile=profile, process=None, port=record.port,
+                password=record.password, pid=record.pid,
+                keep_running=record.keep_running,
+            )
+            if self._rc_pid(session) == record.pid:
+                self.sessions[profile.id] = session
+            elif not Path(profile.drive + "\\").exists():
+                # Stale record after an OS reboot / terminated rclone.
+                self.registry.delete(profile.id)
+
+    def _forget(self, profile_id: str) -> None:
+        session = self.sessions.pop(profile_id, None)
+        if session and session.log_file:
+            session.log_file.close()
+        self.registry.delete(profile_id)
 
     def is_mounted(self, profile_id: str) -> bool:
         session = self.sessions.get(profile_id)
         if session is None:
             return False
-        if session.process.poll() is not None:
-            session.log_file.close()
-            del self.sessions[profile_id]
-            return False
-        return True
+        if session.process is not None:
+            running = session.process.poll() is None
+        else:
+            running = self._rc_pid(session) == session.pid
+        if not running:
+            self._forget(profile_id)
+        return running
+
+    def keep_running(self, profile_id: str) -> bool:
+        return self.is_mounted(profile_id) and self.sessions[profile_id].keep_running
+
+    def set_keep_running(self, profile_id: str, enabled: bool) -> None:
+        if not self.is_mounted(profile_id):
+            return
+        session = self.sessions[profile_id]
+        self.registry.put(BackgroundRecord(
+            profile_id, session.profile.drive, session.port, session.pid,
+            session.password, bool(enabled),
+        ))
+        session.keep_running = bool(enabled)
 
     def start(self, profile: Profile) -> None:
         profile.validate()
@@ -110,35 +179,72 @@ class MountManager:
         env.update({"RCLONE_RC_USER": "s3drive", "RCLONE_RC_PASS": password})
         stream = (logs / f"{profile.id}.log").open("ab")
         try:
+            # Detached from the UI's console/job, still in the INTERACTIVE
+            # user's Windows session (not Session 0 / LocalSystem).
+            flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
             process = subprocess.Popen(
                 mount_command(profile, executable, cache, port),
                 stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT,
-                env=env, creationflags=subprocess.CREATE_NO_WINDOW,
+                env=env, creationflags=flags,
             )
         except Exception:
             stream.close()
             raise
-        self.sessions[profile.id] = Session(profile, process, port, password, stream)
+        session = Session(profile, process, port, password, process.pid,
+                          profile.keep_running, stream)
+        self.sessions[profile.id] = session
+        try:
+            self.registry.put(BackgroundRecord(
+                profile.id, profile.drive, port, process.pid, password, profile.keep_running
+            ))
+        except Exception:
+            # A mount must not become impossible to recover simply because
+            # writing its control metadata failed.
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            self.sessions.pop(profile.id, None)
+            stream.close()
+            raise
 
     def stop(self, profile_id: str) -> None:
         if not self.is_mounted(profile_id):
             return
         session = self.sessions[profile_id]
-        token = base64.b64encode(f"s3drive:{session.password}".encode()).decode()
-        request = Request(
-            f"http://127.0.0.1:{session.port}/core/quit",
-            data=b"{}", method="POST",
-            headers={"Authorization": "Basic " + token, "Content-Type": "application/json"},
-        )
+        # Fail closed when uploads are pending; an unsafe quit can strand data
+        # in the VFS cache that has not reached the S3 backend.
         try:
-            with urlopen(request, timeout=5) as response:
-                response.read()
+            stats = self._rc(session, "vfs/stats")
+            cache = stats["diskCache"]
+            queued = int(cache["uploadsQueued"])
+            active = int(cache["uploadsInProgress"])
+            errors = int(cache["erroredFiles"])
+        except Exception as exc:
+            raise RuntimeError(
+                "Не удалось проверить очередь записи rclone; диск не отключён. "
+                "Проверьте журнал и повторите попытку."
+            ) from exc
+        if queued or active or errors:
+            raise RuntimeError(
+                f"Диск не отключён: ожидают загрузки {queued}, передаются {active}, "
+                f"файлов с ошибками {errors}. Дождитесь завершения записи и проверьте ошибки."
+            )
+        try:
+            self._rc(session, "core/quit", timeout=5)
         except Exception:
-            # core/quit may close the connection before replying.
+            # rclone may terminate its RC server before the response arrives.
             pass
-        try:
-            session.process.wait(timeout=15)
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeError("rclone не завершился. Диск оставлен подключённым во избежание потери данных.") from exc
-        finally:
-            self.is_mounted(profile_id)
+        if session.process is not None:
+            try:
+                session.process.wait(timeout=15)
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError("rclone не завершился. Диск оставлен подключённым.") from exc
+        else:
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline and self._rc_pid(session) == session.pid:
+                time.sleep(0.2)
+            if self._rc_pid(session) == session.pid:
+                raise RuntimeError("Фоновый rclone не завершился. Диск оставлен подключённым.")
+        self._forget(profile_id)

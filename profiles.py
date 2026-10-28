@@ -25,6 +25,7 @@ class Profile:
     region: str = "us-east-1"
     create_shortcut: bool = False
     open_after_mount: bool = False
+    keep_running: bool = False
 
     def validate(self) -> None:
         if not self.name.strip():
@@ -48,6 +49,8 @@ class Profile:
             raise ValueError("Некорректный регион S3.")
         if not isinstance(self.create_shortcut, bool) or not isinstance(self.open_after_mount, bool):
             raise ValueError("Параметры ярлыка и открытия диска должны быть true/false.")
+        if type(self.keep_running) is not bool:
+            raise ValueError("Фоновый режим должен быть true или false.")
 
 
 def config_path() -> Path:

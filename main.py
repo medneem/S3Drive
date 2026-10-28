@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from dependencies import winfsp_installed, winfsp_installer
+from background import sessions_to_stop
 from drive_actions import (MountState, create_desktop_shortcut, disk_root,
                            mount_state, open_mounted_disk)
 from startup import StartupStatus, ensure_winfsp
@@ -56,6 +57,15 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Не удалось открыть config.json",
                 f"{exc}\n\nЧтобы избежать потери профилей, сохранение настроек заблокировано. "
                 "Исправьте файл config.json и перезапустите S3Drive.")
+
+        try:
+            self.mounts.recover(self.profiles)
+        except Exception as exc:
+            QMessageBox.warning(
+                self, "Фоновые подключения",
+                f"Не удалось восстановить управление фоновыми дисками: {exc}\n"
+                "Существующие диски не отключены. Проверьте состояние перед подключением.",
+            )
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -102,6 +112,12 @@ class MainWindow(QMainWindow):
         self.open_checkbox = QCheckBox("Открыть диск после подключения")
         fields.addRow("", self.shortcut_checkbox)
         fields.addRow("", self.open_checkbox)
+        self.background_checkbox = QCheckBox("Оставлять диск подключённым после закрытия программы")
+        self.background_checkbox.setToolTip(
+            "rclone продолжит работать от вашего имени в фоне. "
+            "Это не служба Windows, и после перезагрузки автоподключения пока нет."
+        )
+        fields.addRow("", self.background_checkbox)
         right.addWidget(group, 1)
 
         self.status = QLabel("Выберите профиль или создайте новый.")
@@ -131,6 +147,8 @@ class MainWindow(QMainWindow):
         self.unmount_button.clicked.connect(self.unmount_profile)
         self.refresh_items()
         self.new_profile()
+        if self.profiles:
+            self.items.setCurrentRow(0)
 
         self.pending_mounts: dict[str, tuple[Profile, float]] = {}
         self.mount_timer = QTimer(self)
@@ -173,6 +191,7 @@ class MainWindow(QMainWindow):
         self.path_style.setChecked(profile.path_style)
         self.shortcut_checkbox.setChecked(profile.create_shortcut)
         self.open_checkbox.setChecked(profile.open_after_mount)
+        self.background_checkbox.setChecked(profile.keep_running)
         self.region.setText(profile.region)
         self.update_status()
 
@@ -185,6 +204,7 @@ class MainWindow(QMainWindow):
         self.path_style.setChecked(True)
         self.shortcut_checkbox.setChecked(False)
         self.open_checkbox.setChecked(False)
+        self.background_checkbox.setChecked(False)
         self.region.setText("us-east-1")
         self.status.setText("Новый профиль. Заполните поля и нажмите «Сохранить».")
 
@@ -197,6 +217,7 @@ class MainWindow(QMainWindow):
             path_style=self.path_style.isChecked(), region=self.region.text().strip(),
             create_shortcut=self.shortcut_checkbox.isChecked(),
             open_after_mount=self.open_checkbox.isChecked(),
+            keep_running=self.background_checkbox.isChecked(),
         )
         profile.validate()
         return profile
@@ -209,13 +230,30 @@ class MainWindow(QMainWindow):
             return False
         try:
             profile = self.draft()
-            if self.mounts.is_mounted(profile.id):
-                raise ValueError("Отключите диск перед редактированием параметров подключения.")
+            existing = next((p for p in self.profiles if p.id == profile.id), None)
+            mounted = self.mounts.is_mounted(profile.id)
+            if mounted and existing is not None:
+                fixed_fields = (
+                    "name", "endpoint", "bucket", "access_key", "secret_key",
+                    "drive", "path_style", "region",
+                )
+                if any(getattr(existing, key) != getattr(profile, key) for key in fixed_fields):
+                    raise ValueError("Отключите диск перед изменением настроек S3.")
             updated = [p for p in self.profiles if p.id != profile.id] + [profile]
             if len({p.drive for p in updated}) != len(updated):
                 raise ValueError("Буква диска должна быть уникальной для каждого профиля.")
-            self.store.save(updated)
+            previous_background = self.mounts.keep_running(profile.id) if mounted else False
+            if mounted and previous_background != profile.keep_running:
+                self.mounts.set_keep_running(profile.id, profile.keep_running)
+            try:
+                self.store.save(updated)
+            except Exception:
+                if mounted and previous_background != profile.keep_running:
+                    self.mounts.set_keep_running(profile.id, previous_background)
+                raise
             self.profiles = updated
+            if mounted:
+                self.mounts.sessions[profile.id].profile = profile
             self.refresh_items(profile.id)
             self.status.setText("Настройки сохранены (ключи защищены Windows DPAPI).")
             return True
@@ -326,27 +364,39 @@ class MainWindow(QMainWindow):
         is_running = bool(profile and self.mounts.is_mounted(profile.id))
         is_ready = bool(is_running and os.path.isdir(disk_root(profile.drive)))
         self.unmount_button.setEnabled(is_running)
+        self.unmount_button.setText(
+            "Отключить фон и диск" if is_running and self.mounts.keep_running(profile.id)
+            else "Отключить диск"
+        )
         self.mount_button.setEnabled(not is_running)
         if profile:
             text = ("Подключение…" if profile.id in self.pending_mounts
+                    else "Подключён (в фоне)" if is_ready and self.mounts.keep_running(profile.id)
                     else "Подключён" if is_ready
                     else "Монтирование запущено…" if is_running else "Отключён")
             self.status.setText(f"{profile.drive}: {text}")
 
     def closeEvent(self, event):
-        running = [p for p in self.profiles if self.mounts.is_mounted(p.id)]
-        if running:
-            result = QMessageBox.question(
+        running = [
+            self.mounts.sessions[p.id] for p in self.profiles
+            if self.mounts.is_mounted(p.id)
+        ]
+        to_stop = sessions_to_stop(running)
+        if to_stop:
+            answer = QMessageBox.question(
                 self, "Завершение S3Drive",
-                "Отключить все диски и закрыть программу?\n"
-                "Перед отключением закройте изменяемые файлы и дождитесь их загрузки в S3.",
+                "Отключить диски без фонового режима и закрыть программу?\n"
+                "Фоновые подключения останутся активными.\n\n"
+                "Перед отключением закройте изменяемые файлы и дождитесь загрузки в S3.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
             )
-            if result != QMessageBox.StandardButton.Yes:
+            if answer != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
-            for profile in running:
+            for profile_id in to_stop:
                 try:
-                    self.mounts.stop(profile.id)
+                    self.mounts.stop(profile_id)
                 except Exception as exc:
                     QMessageBox.warning(self, "Не удалось отключить диск", str(exc))
                     event.ignore()

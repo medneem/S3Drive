@@ -6,6 +6,7 @@ import os
 import secrets
 import shutil
 import socket
+import sys
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,7 +47,9 @@ def mount_command(profile: Profile, executable: str, cache_dir: Path, port: int)
 
 
 def find_rclone() -> str:
-    alongside = Path(__file__).resolve().parent / "rclone.exe"
+    app_dir = (Path(sys.executable).resolve().parent if getattr(sys, "frozen", False)
+               else Path(__file__).resolve().parent)
+    alongside = app_dir / "rclone.exe"
     if alongside.is_file():
         return str(alongside)
     resolved = shutil.which("rclone.exe") or shutil.which("rclone")

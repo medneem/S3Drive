@@ -2,8 +2,10 @@
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
+import mounts
 from mounts import mount_command, remote_environment
 from profiles import ProfileStore, new_profile
 
@@ -47,6 +49,15 @@ class MountTests(unittest.TestCase):
         self.assertEqual(env["RCLONE_CONFIG_S3DRIVE_MOUNT_FORCE_PATH_STYLE"], "true")
         self.assertEqual(env["RCLONE_CONFIG_S3DRIVE_MOUNT_ENDPOINT"], "http://srv-nas-01:8010")
         self.assertEqual(env["RCLONE_CONFIG_S3DRIVE_MOUNT_TYPE"], "s3")
+
+    def test_portable_rclone_is_found_beside_built_executable(self):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            rclone = directory / "rclone.exe"
+            rclone.write_bytes(b"rclone-placeholder")
+            with mock.patch.object(mounts.sys, "frozen", True, create=True):
+                with mock.patch.object(mounts.sys, "executable", str(directory / "S3Drive.exe")):
+                    self.assertEqual(mounts.find_rclone(), str(rclone))
 
     def test_config_is_encrypted_not_plaintext(self):
         p = sample()

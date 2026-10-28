@@ -1,5 +1,6 @@
 """Boundary tests for profile validation, secret persistence and rclone invocation."""
 import json
+from dataclasses import asdict
 import tempfile
 import unittest
 from unittest import mock
@@ -110,8 +111,12 @@ class MountTests(unittest.TestCase):
     def test_migrates_legacy_profiles_without_deleting_source(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            original = self.make_store(root / "profiles.json")
-            original.save([sample(name="Мигрированный S3")])
+            record = asdict(sample(name="Мигрированный S3"))
+            record["access_key"] = "protected:" + record["access_key"][::-1]
+            record["secret_key"] = "protected:" + record["secret_key"][::-1]
+            (root / "profiles.json").write_text(
+                json.dumps([record], ensure_ascii=False), encoding="utf-8"
+            )
             portable = self.make_store(root / "config.json", root / "profiles.json")
             self.assertEqual(portable.load()[0].name, "Мигрированный S3")
             self.assertTrue((root / "profiles.json").exists())

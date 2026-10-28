@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 from dependencies import winfsp_installed, winfsp_installer
 from startup import StartupStatus, ensure_winfsp
 from mounts import MountManager
-from profiles import Profile, ProfileStore, app_data_dir
+from profiles import Profile, ProfileStore, app_data_dir, config_path
 from version import APP_VERSION
 
 
@@ -44,11 +44,15 @@ class MainWindow(QMainWindow):
         self.resize(940, 560)
         self.store = ProfileStore()
         self.mounts = MountManager()
+        self.settings_load_error = False
         try:
             self.profiles = self.store.load()
         except Exception as exc:
+            self.settings_load_error = True
             self.profiles = []
-            QMessageBox.warning(self, "Не удалось открыть настройки", str(exc))
+            QMessageBox.critical(self, "Не удалось открыть config.json",
+                f"{exc}\n\nЧтобы избежать потери профилей, сохранение настроек заблокировано. "
+                "Исправьте файл config.json и перезапустите S3Drive.")
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -124,7 +128,7 @@ class MainWindow(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_status)
         self.timer.start(1500)
-        self.statusBar().showMessage(f"Настройки и журналы: {app_data_dir()}")
+        self.statusBar().showMessage(f"Конфигурация: {config_path()} | Кэш и журналы: {app_data_dir()}")
 
     def selected_id(self) -> str | None:
         item = self.items.currentItem()
@@ -180,6 +184,11 @@ class MainWindow(QMainWindow):
         return profile
 
     def save_profile(self) -> bool:
+        if self.settings_load_error:
+            QMessageBox.critical(self, "Ошибка config.json",
+                "Сохранение заблокировано из-за ошибки чтения config.json. "
+                "Исправьте конфигурацию и перезапустите программу.")
+            return False
         try:
             profile = self.draft()
             if self.mounts.is_mounted(profile.id):
@@ -197,6 +206,9 @@ class MainWindow(QMainWindow):
             return False
 
     def remove_profile(self):
+        if self.settings_load_error:
+            QMessageBox.warning(self, "Ошибка config.json", "Удаление заблокировано из-за ошибки чтения конфигурации.")
+            return
         profile = self.selected_profile()
         if profile is None:
             return

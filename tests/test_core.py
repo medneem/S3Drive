@@ -7,6 +7,7 @@ from pathlib import Path
 
 import dependencies
 import mounts
+import profiles
 from mounts import mount_command, remote_environment
 from profiles import ProfileStore, new_profile
 
@@ -71,18 +72,67 @@ class MountTests(unittest.TestCase):
                 with mock.patch.object(mounts.sys, "executable", str(directory / "S3Drive.exe")):
                     self.assertTrue(Path(mounts.find_rclone()).samefile(rclone))
 
+    @staticmethod
+    def make_store(path, legacy_path=None):
+        return ProfileStore(
+            path, encrypt=lambda x: "protected:" + x[::-1],
+            decrypt=lambda x: x.removeprefix("protected:")[::-1],
+            legacy_path=legacy_path,
+        )
+
     def test_config_is_encrypted_not_plaintext(self):
-        p = sample()
+        p = sample(name="Мой QNAP")
         with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "profiles.json"
-            store = ProfileStore(path, encrypt=lambda x: "protected:" + x[::-1],
-                                 decrypt=lambda x: x.removeprefix("protected:")[::-1])
+            path = Path(td) / "config.json"
+            store = self.make_store(path)
             store.save([p])
             raw = path.read_text(encoding="utf-8")
             self.assertNotIn(p.secret_key, raw)
             self.assertNotIn(p.access_key, raw)
-            self.assertEqual(json.loads(raw)[0]["name"], p.name)
+            self.assertEqual(json.loads(raw)["profiles"][0]["name"], "Мой QNAP")
             self.assertEqual(store.load(), [p])
+
+    def test_first_launch_creates_empty_portable_config(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.json"
+            store = self.make_store(path)
+            self.assertEqual(store.load(), [])
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"profiles": []})
+
+    def test_config_file_is_beside_portable_executable(self):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            with mock.patch.object(profiles.sys, "frozen", True, create=True):
+                with mock.patch.object(profiles.sys, "executable", str(directory / "S3Drive.exe")):
+                    self.assertEqual(profiles.config_path().parent, directory.resolve())
+                    self.assertEqual(profiles.config_path().name, "config.json")
+
+    def test_migrates_legacy_profiles_without_deleting_source(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            original = self.make_store(root / "profiles.json")
+            original.save([sample(name="Мигрированный S3")])
+            portable = self.make_store(root / "config.json", root / "profiles.json")
+            self.assertEqual(portable.load()[0].name, "Мигрированный S3")
+            self.assertTrue((root / "profiles.json").exists())
+            self.assertEqual(json.loads((root / "config.json").read_text(encoding="utf-8"))["profiles"][0]["name"], "Мигрированный S3")
+
+    def test_existing_config_has_priority_over_legacy(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            legacy = root / "profiles.json"
+            legacy.write_text("invalid JSON", encoding="utf-8")
+            portable = self.make_store(root / "config.json", legacy)
+            portable.save([sample(name="Актуальный S3")])
+            self.assertEqual(portable.load()[0].name, "Актуальный S3")
+
+    def test_bad_config_is_not_silently_overwritten(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.json"
+            path.write_text('{"profiles": "corrupted"}', encoding="utf-8")
+            with self.assertRaises(ValueError):
+                self.make_store(path).load()
+            self.assertEqual(path.read_text(encoding="utf-8"), '{"profiles": "corrupted"}')
 
 
 if __name__ == "__main__":

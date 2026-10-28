@@ -5,6 +5,7 @@ import base64
 import json
 import os
 import re
+import sys
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -45,6 +46,13 @@ class Profile:
             raise ValueError("Некорректный регион S3.")
 
 
+def config_path() -> Path:
+    """Portable config beside S3Drive.exe; project folder in development."""
+    root = (Path(sys.executable).resolve().parent if getattr(sys, "frozen", False)
+            else Path(__file__).resolve().parent)
+    return root / "config.json"
+
+
 def app_data_dir() -> Path:
     root = os.environ.get("LOCALAPPDATA")
     return (Path(root) if root else Path.home() / ".local" / "share") / "S3Drive"
@@ -65,26 +73,47 @@ def dpapi_decrypt(value: str) -> str:
 
 
 class ProfileStore:
-    def __init__(self, path: Path | None = None, encrypt=None, decrypt=None):
-        self.path = path or app_data_dir() / "profiles.json"
+    def __init__(
+        self, path: Path | None = None, encrypt=None, decrypt=None,
+        legacy_path: Path | None = None,
+    ):
+        self.path = path if path is not None else config_path()
         self.encrypt = encrypt or dpapi_encrypt
         self.decrypt = decrypt or dpapi_decrypt
+        self.legacy_path = (legacy_path if legacy_path is not None else
+                            app_data_dir() / "profiles.json" if path is None else None)
 
-    def load(self) -> list[Profile]:
-        if not self.path.exists():
-            return []
-        data = json.loads(self.path.read_text(encoding="utf-8-sig"))
-        if not isinstance(data, list):
-            raise ValueError("profiles.json должен содержать список.")
+    def _deserialize(self, records: list) -> list[Profile]:
+        if not isinstance(records, list):
+            raise ValueError("Профили должны быть массивом JSON.")
         profiles = []
-        for record in data:
-            record = dict(record)
-            record["access_key"] = self.decrypt(record["access_key"])
-            record["secret_key"] = self.decrypt(record["secret_key"])
-            profile = Profile(**record)
+        for record in records:
+            if not isinstance(record, dict):
+                raise ValueError("Каждый профиль должен быть JSON-объектом.")
+            values = dict(record)
+            values["access_key"] = self.decrypt(values["access_key"])
+            values["secret_key"] = self.decrypt(values["secret_key"])
+            profile = Profile(**values)
             profile.validate()
             profiles.append(profile)
         return profiles
+
+    def load(self) -> list[Profile]:
+        if self.path.exists():
+            data = json.loads(self.path.read_text(encoding="utf-8-sig"))
+            if not isinstance(data, dict) or not isinstance(data.get("profiles"), list):
+                raise ValueError("config.json должен содержать объект с массивом profiles.")
+            return self._deserialize(data["profiles"])
+
+        # Upgrade from earlier releases; never delete the old file.
+        if self.legacy_path is not None and self.legacy_path.is_file():
+            data = json.loads(self.legacy_path.read_text(encoding="utf-8-sig"))
+            profiles = self._deserialize(data)
+            self.save(profiles)
+            return profiles
+
+        self.save([])
+        return []
 
     def save(self, profiles: list[Profile]) -> None:
         records = []
@@ -97,7 +126,7 @@ class ProfileStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp = self.path.with_name(self.path.name + ".tmp")
         try:
-            temp.write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            temp.write_text(json.dumps({"profiles": records}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             temp.replace(self.path)
         finally:
             temp.unlink(missing_ok=True)

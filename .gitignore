@@ -14,3 +14,5 @@ profiles.json.tmp
 rclone.exe
 *.log
 tools/
+config.json
+config.json.tmp

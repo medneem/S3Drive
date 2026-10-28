@@ -145,12 +145,11 @@ class MainWindow(QMainWindow):
         self.remove_button.clicked.connect(self.remove_profile)
         self.mount_button.clicked.connect(self.mount_profile)
         self.unmount_button.clicked.connect(self.unmount_profile)
+        self.pending_mounts: dict[str, tuple[Profile, float]] = {}
         self.refresh_items()
         self.new_profile()
         if self.profiles:
             self.items.setCurrentRow(0)
-
-        self.pending_mounts: dict[str, tuple[Profile, float]] = {}
         self.mount_timer = QTimer(self)
         self.mount_timer.timeout.connect(self.poll_mounts)
         self.mount_timer.start(500)

@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from background import BackgroundRecord, BackgroundRegistry, sessions_to_stop
+from mounts import MountManager, Session
 
 
 class RegistryTests(unittest.TestCase):
@@ -45,6 +46,68 @@ class LifetimeTests(unittest.TestCase):
         mounts = [mock.Mock(profile=mock.Mock(id="a"), keep_running=True)]
         self.assertEqual(sessions_to_stop(mounts), [])
 
+
+
+
+class MountManagerTests(unittest.TestCase):
+    def registry(self, root):
+        return BackgroundRegistry(Path(root) / "background.json",
+            encrypt=lambda s: "cipher:" + s[::-1],
+            decrypt=lambda s: s.removeprefix("cipher:")[::-1])
+
+    def profile(self):
+        from profiles import new_profile
+        return new_profile(name="Test", endpoint="http://nas.local:8010",
+                           bucket="my-backup", access_key="foo", secret_key="bar")
+
+    def test_adopts_authenticated_process_with_matching_pid(self):
+        with tempfile.TemporaryDirectory() as root:
+            profile = self.profile()
+            reg = self.registry(root)
+            reg.put(BackgroundRecord(profile.id, profile.drive, 4567, 1234, "pw", True))
+            manager = MountManager(reg)
+            with mock.patch.object(manager, "_rc_pid", return_value=1234):
+                manager.recover([profile])
+            self.assertTrue(manager.sessions[profile.id].keep_running)
+            self.assertIsNone(manager.sessions[profile.id].process)
+
+    def test_does_not_adopt_reused_port_owned_by_other_process(self):
+        with tempfile.TemporaryDirectory() as root:
+            profile = self.profile()
+            reg = self.registry(root)
+            reg.put(BackgroundRecord(profile.id, profile.drive, 4567, 1234, "pw", True))
+            manager = MountManager(reg)
+            with mock.patch.object(manager, "_rc_pid", return_value=9999):
+                with mock.patch("mounts.Path.exists", return_value=False):
+                    manager.recover([profile])
+            self.assertNotIn(profile.id, manager.sessions)
+
+    def test_queued_uploads_prevent_disconnect(self):
+        with tempfile.TemporaryDirectory() as root:
+            profile = self.profile()
+            reg = self.registry(root)
+            reg.put(BackgroundRecord(profile.id, profile.drive, 4567, 1234, "pw", True))
+            manager = MountManager(reg)
+            manager.sessions[profile.id] = Session(profile, None, 4567, "pw", 1234, True)
+            with mock.patch.object(manager, "_rc_pid", return_value=1234):
+                with mock.patch.object(manager, "_rc", return_value={
+                    "diskCache": {"uploadsQueued": 2, "uploadsInProgress": 0, "erroredFiles": 0}
+                }) as rc:
+                    with self.assertRaisesRegex(RuntimeError, "Диск не отключён"):
+                        manager.stop(profile.id)
+                    rc.assert_called_once()
+            self.assertIn(profile.id, manager.sessions)
+
+    def test_background_mode_toggle_persists_for_live_disk(self):
+        with tempfile.TemporaryDirectory() as root:
+            profile = self.profile()
+            reg = self.registry(root)
+            reg.put(BackgroundRecord(profile.id, profile.drive, 4567, 1234, "pw", True))
+            manager = MountManager(reg)
+            manager.sessions[profile.id] = Session(profile, None, 4567, "pw", 1234, True)
+            with mock.patch.object(manager, "_rc_pid", return_value=1234):
+                manager.set_keep_running(profile.id, False)
+            self.assertFalse(reg.load()[profile.id].keep_running)
 
 if __name__ == "__main__":
     unittest.main()

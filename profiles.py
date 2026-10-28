@@ -23,6 +23,8 @@ class Profile:
     drive: str = "S:"
     path_style: bool = True
     region: str = "us-east-1"
+    create_shortcut: bool = False
+    open_after_mount: bool = False
 
     def validate(self) -> None:
         if not self.name.strip():
@@ -44,6 +46,8 @@ class Profile:
             raise ValueError("Укажите Access Key и Secret Key.")
         if not self.region or any(c.isspace() for c in self.region):
             raise ValueError("Некорректный регион S3.")
+        if not isinstance(self.create_shortcut, bool) or not isinstance(self.open_after_mount, bool):
+            raise ValueError("Параметры ярлыка и открытия диска должны быть true/false.")
 
 
 def config_path() -> Path:

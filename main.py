@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -16,6 +17,8 @@ from PySide6.QtWidgets import (
 )
 
 from dependencies import winfsp_installed, winfsp_installer
+from drive_actions import (MountState, create_desktop_shortcut, disk_root,
+                           mount_state, open_mounted_disk)
 from startup import StartupStatus, ensure_winfsp
 from mounts import MountManager
 from profiles import Profile, ProfileStore, app_data_dir, config_path
@@ -95,6 +98,10 @@ class MainWindow(QMainWindow):
         ):
             fields.addRow(label, widget)
         fields.addRow("", self.path_style)
+        self.shortcut_checkbox = QCheckBox("Создать ярлык на рабочем столе")
+        self.open_checkbox = QCheckBox("Открыть диск после подключения")
+        fields.addRow("", self.shortcut_checkbox)
+        fields.addRow("", self.open_checkbox)
         right.addWidget(group, 1)
 
         self.status = QLabel("Выберите профиль или создайте новый.")
@@ -124,6 +131,11 @@ class MainWindow(QMainWindow):
         self.unmount_button.clicked.connect(self.unmount_profile)
         self.refresh_items()
         self.new_profile()
+
+        self.pending_mounts: dict[str, tuple[Profile, float]] = {}
+        self.mount_timer = QTimer(self)
+        self.mount_timer.timeout.connect(self.poll_mounts)
+        self.mount_timer.start(500)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_status)
@@ -159,6 +171,8 @@ class MainWindow(QMainWindow):
         self.secret.setText(profile.secret_key)
         self.drive.setCurrentText(profile.drive)
         self.path_style.setChecked(profile.path_style)
+        self.shortcut_checkbox.setChecked(profile.create_shortcut)
+        self.open_checkbox.setChecked(profile.open_after_mount)
         self.region.setText(profile.region)
         self.update_status()
 
@@ -169,6 +183,8 @@ class MainWindow(QMainWindow):
             widget.clear()
         self.drive.setCurrentText("S:")
         self.path_style.setChecked(True)
+        self.shortcut_checkbox.setChecked(False)
+        self.open_checkbox.setChecked(False)
         self.region.setText("us-east-1")
         self.status.setText("Новый профиль. Заполните поля и нажмите «Сохранить».")
 
@@ -179,6 +195,8 @@ class MainWindow(QMainWindow):
             bucket=self.bucket.text().strip(), access_key=self.access.text().strip(),
             secret_key=self.secret.text(), drive=self.drive.currentText(),
             path_style=self.path_style.isChecked(), region=self.region.text().strip(),
+            create_shortcut=self.shortcut_checkbox.isChecked(),
+            open_after_mount=self.open_checkbox.isChecked(),
         )
         profile.validate()
         return profile
@@ -236,12 +254,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self, "WinFsp не установлен",
                 "Для монтирования нужен системный драйвер WinFsp. "
-                "Нажмите «Установить WinFsp…» и завершите установку.",
+                "Установите драйвер и запустите S3Drive повторно.",
             )
             return
         try:
             self.mounts.start(profile)
-            self.status.setText(f"Запущено монтирование {profile.drive}. Проверьте диск в Проводнике.")
+            self.pending_mounts[profile.id] = (profile, time.monotonic())
+            self.status.setText(f"Подключение диска {profile.drive}…")
+
         except Exception as exc:
             QMessageBox.warning(self, "Не удалось подключить S3", str(exc))
         self.update_status()
@@ -252,21 +272,66 @@ class MainWindow(QMainWindow):
             return
         try:
             self.mounts.stop(profile.id)
+            self.pending_mounts.pop(profile.id, None)
             self.status.setText(f"Диск {profile.drive} отключён.")
         except Exception as exc:
             QMessageBox.warning(self, "Не удалось отключить диск", str(exc))
         self.update_status()
 
+    def poll_mounts(self) -> None:
+        """Only notify and run optional actions once the drive appears in Explorer."""
+        for profile_id, (profile, started_at) in list(self.pending_mounts.items()):
+            alive = self.mounts.is_mounted(profile_id)
+            ready = alive and os.path.isdir(disk_root(profile.drive))
+            state = mount_state(
+                process_alive=alive, drive_ready=ready,
+                elapsed_seconds=time.monotonic() - started_at,
+            )
+            if state == MountState.WAITING:
+                continue
+            self.pending_mounts.pop(profile_id, None)
+            if state == MountState.READY:
+                problems = []
+                if profile.create_shortcut:
+                    try:
+                        create_desktop_shortcut(profile.drive)
+                    except Exception as exc:
+                        problems.append(f"Ярлык на рабочем столе не создан: {exc}")
+                if profile.open_after_mount:
+                    try:
+                        open_mounted_disk(profile.drive)
+                    except Exception as exc:
+                        problems.append(f"Не удалось открыть диск: {exc}")
+                message = f"Диск {profile.drive} успешно подключён."
+                if problems:
+                    message += "\n\n" + "\n".join(problems)
+                QMessageBox.information(self, "S3Drive", message)
+            elif state == MountState.FAILED:
+                QMessageBox.warning(
+                    self, "Ошибка подключения",
+                    f"Не удалось подключить диск {profile.drive}: процесс rclone завершился.\n"
+                    f"Подробности: {app_data_dir() / 'logs' / (profile.id + '.log')}",
+                )
+            else:
+                QMessageBox.warning(
+                    self, "Подключение не подтверждено",
+                    f"Диск {profile.drive} не появился в Windows за 40 секунд.\n"
+                    "Не отключайте компьютер во время записи в S3.\n"
+                    "rclone всё ещё работает; проверьте журнал и состояние диска.",
+                )
+        self.update_status()
+
     def update_status(self):
         profile = self.selected_profile()
         is_running = bool(profile and self.mounts.is_mounted(profile.id))
-        is_ready = bool(is_running and Path(profile.drive + "\\").exists())
+        is_ready = bool(is_running and os.path.isdir(disk_root(profile.drive)))
         self.unmount_button.setEnabled(is_running)
         self.mount_button.setEnabled(not is_running)
         if profile:
-            self.status.setText(
-                f"{profile.drive}: " + ("Подключён" if is_ready else "Монтирование запущено…" if is_running else "Отключён")
-            )
+            text = ("Подключение…" if profile.id in self.pending_mounts
+                    else "Подключён" if is_ready
+                    else "Монтирование запущено…" if is_running else "Отключён")
+            self.status.setText(f"{profile.drive}: {text}")
 
     def closeEvent(self, event):
         running = [p for p in self.profiles if self.mounts.is_mounted(p.id)]

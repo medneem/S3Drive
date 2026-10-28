@@ -38,6 +38,7 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("S:", cmd)
         self.assertIn("--vfs-cache-mode writes", cmd)
         self.assertIn("--rc-htpasswd", cmd)
+        self.assertIn("FileSecurity=D:P(A;;FRFW;;;WD)", cmd)
         self.assertNotIn(p.secret_key, cmd)
         self.assertNotIn(p.access_key, cmd)
 

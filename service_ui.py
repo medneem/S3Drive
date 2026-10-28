@@ -37,7 +37,7 @@ def run_admin(action: str, profile_id: str, wait_ms: int = 90000) -> None:
     handle = proc["hProcess"]
     try:
         result = win32event.WaitForSingleObject(handle, wait_ms)
-        if result != win32con.WAIT_OBJECT_0:
+        if result != win32event.WAIT_OBJECT_0:
             raise TimeoutError("Управление службой не завершилось вовремя.")
         code = win32process.GetExitCodeProcess(handle)
         if code != 0:

@@ -57,7 +57,7 @@ def service_executable_dir() -> Path:
 def validate_service_profile(profile) -> None:
     profile.validate()
     uuid.UUID(profile.id)
-    for value in (profile.access_key, profile.secret_key, profile.region, profile.endpoint):
+    for value in (profile.name, profile.access_key, profile.secret_key, profile.region, profile.endpoint):
         if any(c in value for c in "\r\n\x00"):
             raise ValueError("S3-параметры не должны содержать переносов строк.")
 
@@ -95,6 +95,7 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
         profile.drive, "--config", str(config), "--vfs-cache-mode", "writes",
         "--cache-dir", str(cache), "--log-file", str(log), "--log-level", "INFO",
         "--volname", f"S3Drive - {profile.name}",
+        "-o", "FileSecurity=D:P(A;;FRFW;;;WD)",
         "--rc", "--rc-addr", f"127.0.0.1:{port}",
         "--rc-htpasswd", str(htpasswd),
     ])

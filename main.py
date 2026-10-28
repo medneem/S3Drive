@@ -1,6 +1,7 @@
 """Russian-language Windows GUI for managing S3 mounts through rclone and WinFsp."""
 from __future__ import annotations
 
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import (
     QPushButton, QVBoxLayout, QWidget,
 )
 
+from dependencies import winfsp_installed, winfsp_installer
 from mounts import MountManager
 from profiles import Profile, ProfileStore, app_data_dir
 from version import APP_VERSION
@@ -100,11 +102,13 @@ class MainWindow(QMainWindow):
         self.add_button = QPushButton("Новый")
         self.save_button = QPushButton("Сохранить")
         self.remove_button = QPushButton("Удалить")
+        self.install_button = QPushButton("Установить WinFsp…")
         self.mount_button = QPushButton("Подключить")
         self.unmount_button = QPushButton("Отключить")
         actions.addWidget(self.add_button)
         actions.addWidget(self.save_button)
         actions.addWidget(self.remove_button)
+        actions.addWidget(self.install_button)
         actions.addStretch()
         actions.addWidget(self.unmount_button)
         actions.addWidget(self.mount_button)
@@ -113,6 +117,7 @@ class MainWindow(QMainWindow):
         self.add_button.clicked.connect(self.new_profile)
         self.save_button.clicked.connect(self.save_profile)
         self.remove_button.clicked.connect(self.remove_profile)
+        self.install_button.clicked.connect(self.install_winfsp)
         self.mount_button.clicked.connect(self.mount_profile)
         self.unmount_button.clicked.connect(self.unmount_profile)
         self.refresh_items()
@@ -211,11 +216,40 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, "Ошибка удаления", str(exc))
 
+    def install_winfsp(self):
+        installer = winfsp_installer()
+        if winfsp_installed():
+            QMessageBox.information(self, "WinFsp", "WinFsp уже установлен.")
+            return
+        if not installer.is_file():
+            QMessageBox.warning(
+                self, "Установщик не найден",
+                "В архиве отсутствует установщик WinFsp. Скачайте полный ZIP из Releases.",
+            )
+            return
+        QMessageBox.information(
+            self, "Установка WinFsp",
+            "Сейчас откроется официальный установщик WinFsp. "
+            "Для установки драйвера Windows запросит права администратора. "
+            "После установки вернитесь в S3Drive.",
+        )
+        try:
+            os.startfile(str(installer))
+        except OSError as exc:
+            QMessageBox.warning(self, "Не удалось запустить WinFsp", str(exc))
+
     def mount_profile(self):
         if not self.save_profile():
             return
         profile = self.selected_profile()
         if profile is None:
+            return
+        if not winfsp_installed():
+            QMessageBox.warning(
+                self, "WinFsp не установлен",
+                "Для монтирования нужен системный драйвер WinFsp. "
+                "Нажмите «Установить WinFsp…» и завершите установку.",
+            )
             return
         try:
             self.mounts.start(profile)
@@ -239,6 +273,7 @@ class MainWindow(QMainWindow):
         profile = self.selected_profile()
         is_running = bool(profile and self.mounts.is_mounted(profile.id))
         is_ready = bool(is_running and Path(profile.drive + "\\").exists())
+        self.install_button.setEnabled(not winfsp_installed() and winfsp_installer().is_file())
         self.unmount_button.setEnabled(is_running)
         self.mount_button.setEnabled(not is_running)
         if profile:

@@ -41,7 +41,7 @@ jobs:
 
       - name: Unit tests and syntax checks
         run: |
-          python -m compileall -q main.py profiles.py mounts.py version.py scripts tests
+          python -m compileall -q main.py profiles.py mounts.py dependencies.py version.py scripts tests
           python -m unittest discover -s tests -v
 
       - name: Build icon
@@ -54,6 +54,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
           if (-not (Test-Path "dist/S3Drive.exe" -PathType Leaf)) { throw "Missing S3Drive.exe" }
 
+      - name: Download and verify bundled dependencies
+        shell: pwsh
+        run: ./scripts/download_dependencies.ps1
+
       - name: Package portable ZIP
         shell: pwsh
         run: |
@@ -63,11 +67,15 @@ jobs:
           $folder = "release/S3Drive"
           New-Item -ItemType Directory -Force $folder | Out-Null
           Copy-Item "dist/S3Drive.exe" $folder
+          Copy-Item "tools/rclone.exe" $folder
+          Copy-Item "tools/winfsp-2.2.26215.msi" $folder
+          Copy-Item "README_SETUP.txt" $folder
+          Copy-Item "third_party/RCLONE_LICENSE.txt" (Join-Path $folder "RCLONE_LICENSE.txt")
           Copy-Item "assets/app.png" (Join-Path $folder "app-icon.png")
           Copy-Item "LICENSE" $folder
           Copy-Item "THIRD_PARTY_NOTICES.md" $folder
           Set-Content -Path (Join-Path $folder "VERSION.txt") -Value $version -Encoding utf8
-          $expected = @("S3Drive.exe", "app-icon.png", "LICENSE", "THIRD_PARTY_NOTICES.md", "VERSION.txt")
+          $expected = @("S3Drive.exe", "rclone.exe", "winfsp-2.2.26215.msi", "README_SETUP.txt", "RCLONE_LICENSE.txt", "app-icon.png", "LICENSE", "THIRD_PARTY_NOTICES.md", "VERSION.txt")
           $files = @(Get-ChildItem -LiteralPath $folder -File)
           if (@(Get-ChildItem -LiteralPath $folder -Directory).Count -ne 0) { throw "Unexpected subfolders" }
           if ($files.Count -ne $expected.Count) { throw "Unexpected file count" }
@@ -125,6 +133,6 @@ jobs:
             gh release create "$tag" "$zip" \
               --target "$GITHUB_SHA" \
               --title "S3Drive $tag" \
-              --notes "Экспериментальная Windows x64 сборка. Для работы отдельно установите WinFsp и rclone. Не используйте для хранения баз данных или активно изменяемых файлов." \
+              --notes "Экспериментальная Windows x64 сборка. rclone.exe уже включён. Установщик WinFsp включён, установите MSI один раз с правами администратора. Не используйте для хранения баз данных или активно изменяемых файлов." \
               --latest
           fi

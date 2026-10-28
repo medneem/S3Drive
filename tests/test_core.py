@@ -5,6 +5,7 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
+import dependencies
 import mounts
 from mounts import mount_command, remote_environment
 from profiles import ProfileStore, new_profile
@@ -16,6 +17,17 @@ def sample(**changes):
                 drive="S:", path_style=True, region="us-east-1")
     data.update(changes)
     return new_profile(**data)
+
+
+class DependencyTests(unittest.TestCase):
+    def test_portable_winfsp_installer_is_resolved_beside_exe(self):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            installer = directory / dependencies.WINFSP_INSTALLER
+            installer.write_bytes(b"msi-test-fixture")
+            with mock.patch.object(dependencies.sys, "frozen", True, create=True):
+                with mock.patch.object(dependencies.sys, "executable", str(directory / "S3Drive.exe")):
+                    self.assertTrue(dependencies.winfsp_installer().samefile(installer))
 
 
 class ProfileTests(unittest.TestCase):

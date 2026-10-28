@@ -26,6 +26,7 @@ class Profile:
     create_shortcut: bool = False
     open_after_mount: bool = False
     keep_running: bool = False
+    service_mode: bool = False
 
     def validate(self) -> None:
         if not self.name.strip():
@@ -51,6 +52,10 @@ class Profile:
             raise ValueError("Параметры ярлыка и открытия диска должны быть true/false.")
         if type(self.keep_running) is not bool:
             raise ValueError("Фоновый режим должен быть true или false.")
+        if type(self.service_mode) is not bool:
+            raise ValueError("Режим службы должен быть true или false.")
+        if self.service_mode and self.keep_running:
+            raise ValueError("Выберите службу Windows или пользовательский фон, но не оба варианта.")
 
 
 def config_path() -> Path:

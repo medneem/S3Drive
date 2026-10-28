@@ -20,6 +20,8 @@ from dependencies import winfsp_installed, winfsp_installer
 from background import sessions_to_stop
 from drive_actions import (MountState, create_desktop_shortcut, disk_root,
                            mount_state, open_mounted_disk)
+from service_ui import run_admin
+from windows_service import service_status, SERVICE_RUNNING, SERVICE_STOPPED
 from startup import StartupStatus, ensure_winfsp
 from mounts import MountManager
 from profiles import Profile, ProfileStore, app_data_dir, config_path
@@ -118,6 +120,18 @@ class MainWindow(QMainWindow):
             "Это не служба Windows, и после перезагрузки автоподключения пока нет."
         )
         fields.addRow("", self.background_checkbox)
+        self.service_checkbox = QCheckBox("Запускать как службу Windows (доступно в Проводнике)")
+        self.service_checkbox.setToolTip(
+            "Реальная служба LocalSystem с автозапуском Windows. "
+            "Установка и остановка службы требуют подтверждения UAC."
+        )
+        fields.addRow("", self.service_checkbox)
+        self.service_checkbox.toggled.connect(
+            lambda checked: self.background_checkbox.setChecked(False) if checked else None
+        )
+        self.background_checkbox.toggled.connect(
+            lambda checked: self.service_checkbox.setChecked(False) if checked else None
+        )
         right.addWidget(group, 1)
 
         self.status = QLabel("Выберите профиль или создайте новый.")
@@ -132,10 +146,12 @@ class MainWindow(QMainWindow):
         self.remove_button = QPushButton("Удалить")
         self.mount_button = QPushButton("Подключить")
         self.unmount_button = QPushButton("Отключить")
+        self.remove_service_button = QPushButton("Удалить службу")
         actions.addWidget(self.add_button)
         actions.addWidget(self.save_button)
         actions.addWidget(self.remove_button)
         actions.addStretch()
+        actions.addWidget(self.remove_service_button)
         actions.addWidget(self.unmount_button)
         actions.addWidget(self.mount_button)
         layout.addLayout(actions)
@@ -145,6 +161,7 @@ class MainWindow(QMainWindow):
         self.remove_button.clicked.connect(self.remove_profile)
         self.mount_button.clicked.connect(self.mount_profile)
         self.unmount_button.clicked.connect(self.unmount_profile)
+        self.remove_service_button.clicked.connect(self.remove_service_profile)
         self.pending_mounts: dict[str, tuple[Profile, float]] = {}
         self.refresh_items()
         self.new_profile()
@@ -191,6 +208,7 @@ class MainWindow(QMainWindow):
         self.shortcut_checkbox.setChecked(profile.create_shortcut)
         self.open_checkbox.setChecked(profile.open_after_mount)
         self.background_checkbox.setChecked(profile.keep_running)
+        self.service_checkbox.setChecked(profile.service_mode)
         self.region.setText(profile.region)
         self.update_status()
 
@@ -204,6 +222,7 @@ class MainWindow(QMainWindow):
         self.shortcut_checkbox.setChecked(False)
         self.open_checkbox.setChecked(False)
         self.background_checkbox.setChecked(False)
+        self.service_checkbox.setChecked(False)
         self.region.setText("us-east-1")
         self.status.setText("Новый профиль. Заполните поля и нажмите «Сохранить».")
 
@@ -217,6 +236,7 @@ class MainWindow(QMainWindow):
             create_shortcut=self.shortcut_checkbox.isChecked(),
             open_after_mount=self.open_checkbox.isChecked(),
             keep_running=self.background_checkbox.isChecked(),
+            service_mode=self.service_checkbox.isChecked(),
         )
         profile.validate()
         return profile
@@ -231,6 +251,18 @@ class MainWindow(QMainWindow):
             profile = self.draft()
             existing = next((p for p in self.profiles if p.id == profile.id), None)
             mounted = self.mounts.is_mounted(profile.id)
+            svc = service_status(profile.id)
+            if svc is not None and existing is not None and profile.service_mode != existing.service_mode:
+                if svc == SERVICE_RUNNING:
+                    raise ValueError("Остановите службу перед сменой режима подключения.")
+            if svc == SERVICE_RUNNING and existing is not None:
+                service_fields = (
+                    "name", "endpoint", "bucket", "access_key", "secret_key",
+                    "drive", "path_style", "region",
+                )
+                if any(getattr(existing, field) != getattr(profile, field)
+                       for field in service_fields):
+                    raise ValueError("Остановите службу перед изменением её настроек S3.")
             if mounted and existing is not None:
                 fixed_fields = (
                     "name", "endpoint", "bucket", "access_key", "secret_key",
@@ -267,8 +299,9 @@ class MainWindow(QMainWindow):
         profile = self.selected_profile()
         if profile is None:
             return
-        if self.mounts.is_mounted(profile.id):
-            QMessageBox.warning(self, "Диск подключён", "Сначала отключите диск.")
+        if self.mounts.is_mounted(profile.id) or service_status(profile.id) is not None:
+            QMessageBox.warning(self, "Подключение существует",
+                "Сначала отключите диск и удалите соответствующую службу Windows.")
             return
         if QMessageBox.question(self, "Удалить профиль", f"Удалить «{profile.name}»?") != QMessageBox.StandardButton.Yes:
             return
@@ -280,6 +313,31 @@ class MainWindow(QMainWindow):
             self.new_profile()
         except Exception as exc:
             QMessageBox.warning(self, "Ошибка удаления", str(exc))
+
+    def remove_service_profile(self):
+        profile = self.selected_profile()
+        if profile is None:
+            return
+        state = service_status(profile.id)
+        if state is None:
+            return
+        if state != SERVICE_STOPPED:
+            QMessageBox.warning(
+                self, "Служба работает",
+                "Сначала нажмите «Остановить службу и диск» и дождитесь отключения.",
+            )
+            return
+        if QMessageBox.question(
+            self, "Удалить службу",
+            f"Удалить службу для диска {profile.drive}?\nНастройки подключения в config.json сохранятся.",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            run_admin("remove", profile.id)
+            QMessageBox.information(self, "S3Drive", "Служба удалена.")
+        except Exception as exc:
+            QMessageBox.warning(self, "Удаление службы", str(exc))
+        self.update_status()
 
     def mount_profile(self):
         if not self.save_profile():
@@ -295,9 +353,24 @@ class MainWindow(QMainWindow):
             )
             return
         try:
-            self.mounts.start(profile)
-            self.pending_mounts[profile.id] = (profile, time.monotonic())
-            self.status.setText(f"Подключение диска {profile.drive}…")
+            if profile.service_mode:
+                if self.mounts.is_mounted(profile.id):
+                    raise RuntimeError("Сначала отключите пользовательское монтирование.")
+                if service_status(profile.id) == SERVICE_RUNNING:
+                    QMessageBox.information(self, "S3Drive", "Служба уже запущена.")
+                    return
+                run_admin("install", profile.id)
+                self.pending_mounts[profile.id] = (profile, time.monotonic())
+                self.status.setText(f"Подключение службы и диска {profile.drive}…")
+            else:
+                if service_status(profile.id) is not None:
+                    raise RuntimeError(
+                        "Для этой записи установлена служба Windows. "
+                        "Остановите и удалите службу перед обычным подключением."
+                    )
+                self.mounts.start(profile)
+                self.pending_mounts[profile.id] = (profile, time.monotonic())
+                self.status.setText(f"Подключение диска {profile.drive}…")
 
         except Exception as exc:
             QMessageBox.warning(self, "Не удалось подключить S3", str(exc))
@@ -308,7 +381,14 @@ class MainWindow(QMainWindow):
         if profile is None:
             return
         try:
-            self.mounts.stop(profile.id)
+            state = service_status(profile.id)
+            if state is not None:
+                if state == SERVICE_STOPPED:
+                    QMessageBox.information(self, "S3Drive", "Служба уже остановлена.")
+                else:
+                    run_admin("stop", profile.id)
+            else:
+                self.mounts.stop(profile.id)
             self.pending_mounts.pop(profile.id, None)
             self.status.setText(f"Диск {profile.drive} отключён.")
         except Exception as exc:
@@ -318,7 +398,8 @@ class MainWindow(QMainWindow):
     def poll_mounts(self) -> None:
         """Only notify and run optional actions once the drive appears in Explorer."""
         for profile_id, (profile, started_at) in list(self.pending_mounts.items()):
-            alive = self.mounts.is_mounted(profile_id)
+            alive = (service_status(profile_id) == SERVICE_RUNNING
+                     if profile.service_mode else self.mounts.is_mounted(profile_id))
             ready = alive and os.path.isdir(disk_root(profile.drive))
             state = mount_state(
                 process_alive=alive, drive_ready=ready,
@@ -346,7 +427,7 @@ class MainWindow(QMainWindow):
             elif state == MountState.FAILED:
                 QMessageBox.warning(
                     self, "Ошибка подключения",
-                    f"Не удалось подключить диск {profile.drive}: процесс rclone завершился.\n"
+                    f"Не удалось подключить диск {profile.drive}: rclone или служба завершилась.\n"
                     f"Подробности: {app_data_dir() / 'logs' / (profile.id + '.log')}",
                 )
             else:
@@ -360,20 +441,35 @@ class MainWindow(QMainWindow):
 
     def update_status(self):
         profile = self.selected_profile()
-        is_running = bool(profile and self.mounts.is_mounted(profile.id))
-        is_ready = bool(is_running and os.path.isdir(disk_root(profile.drive)))
-        self.unmount_button.setEnabled(is_running)
+        if profile is None:
+            self.remove_service_button.setEnabled(False)
+            self.unmount_button.setEnabled(False)
+            self.mount_button.setEnabled(True)
+            return
+        service = service_status(profile.id)
+        service_running = service == SERVICE_RUNNING
+        user_running = self.mounts.is_mounted(profile.id)
+        active = service_running or user_running
+        ready = active and os.path.isdir(disk_root(profile.drive))
+        self.remove_service_button.setEnabled(service == SERVICE_STOPPED)
+        self.unmount_button.setEnabled(active)
         self.unmount_button.setText(
-            "Отключить фон и диск" if is_running and self.mounts.keep_running(profile.id)
+            "Остановить службу и диск" if service is not None
+            else "Отключить фон и диск" if user_running and self.mounts.keep_running(profile.id)
             else "Отключить диск"
         )
-        self.mount_button.setEnabled(not is_running)
-        if profile:
-            text = ("Подключение…" if profile.id in self.pending_mounts
-                    else "Подключён (в фоне)" if is_ready and self.mounts.keep_running(profile.id)
-                    else "Подключён" if is_ready
-                    else "Монтирование запущено…" if is_running else "Отключён")
-            self.status.setText(f"{profile.drive}: {text}")
+        self.mount_button.setEnabled(not active)
+        if profile.id in self.pending_mounts:
+            text = "Подключение…"
+        elif service_running:
+            text = "Служба работает; диск в Проводнике" if ready else "Служба запущена; диск не обнаружен"
+        elif service == SERVICE_STOPPED:
+            text = "Служба установлена, остановлена"
+        elif user_running:
+            text = "Подключён (в фоне)" if self.mounts.keep_running(profile.id) else "Подключён"
+        else:
+            text = "Отключён"
+        self.status.setText(f"{profile.drive}: {text}")
 
     def closeEvent(self, event):
         running = [

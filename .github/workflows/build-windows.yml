@@ -41,7 +41,7 @@ jobs:
 
       - name: Unit tests and syntax checks
         run: |
-          python -m compileall -q main.py profiles.py mounts.py background.py dependencies.py startup.py version.py scripts tests
+          python -m compileall -q main.py profiles.py mounts.py background.py windows_service.py service_admin.py service_ui.py dependencies.py startup.py version.py scripts tests
           python -m unittest discover -s tests -v
 
       - name: Build icon
@@ -53,6 +53,9 @@ jobs:
           python -m PyInstaller --noconfirm --clean --onefile --windowed --name S3Drive --version-file windows_version_info.txt --icon assets/app.ico --add-data "assets/app.svg;assets" main.py
           if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
           if (-not (Test-Path "dist/S3Drive.exe" -PathType Leaf)) { throw "Missing S3Drive.exe" }
+          python -m PyInstaller --noconfirm --clean --onefile --console --name S3DriveAdmin service_admin.py
+          if ($LASTEXITCODE -ne 0) { throw "S3DriveAdmin build failed" }
+          if (-not (Test-Path "dist/S3DriveAdmin.exe" -PathType Leaf)) { throw "Missing S3DriveAdmin.exe" }
 
       - name: Download and verify bundled dependencies
         shell: pwsh
@@ -67,6 +70,7 @@ jobs:
           $folder = "release/S3Drive"
           New-Item -ItemType Directory -Force $folder | Out-Null
           Copy-Item "dist/S3Drive.exe" $folder
+          Copy-Item "dist/S3DriveAdmin.exe" $folder
           Copy-Item "tools/rclone.exe" $folder
           Copy-Item "tools/winfsp-2.2.26215.msi" $folder
           Copy-Item "README_SETUP.txt" $folder
@@ -75,7 +79,7 @@ jobs:
           Copy-Item "LICENSE" $folder
           Copy-Item "THIRD_PARTY_NOTICES.md" $folder
           Set-Content -Path (Join-Path $folder "VERSION.txt") -Value $version -Encoding utf8
-          $expected = @("S3Drive.exe", "rclone.exe", "winfsp-2.2.26215.msi", "README_SETUP.txt", "RCLONE_LICENSE.txt", "app-icon.png", "LICENSE", "THIRD_PARTY_NOTICES.md", "VERSION.txt")
+          $expected = @("S3Drive.exe", "S3DriveAdmin.exe", "rclone.exe", "winfsp-2.2.26215.msi", "README_SETUP.txt", "RCLONE_LICENSE.txt", "app-icon.png", "LICENSE", "THIRD_PARTY_NOTICES.md", "VERSION.txt")
           $files = @(Get-ChildItem -LiteralPath $folder -File)
           if (@(Get-ChildItem -LiteralPath $folder -Directory).Count -ne 0) { throw "Unexpected subfolders" }
           if ($files.Count -ne $expected.Count) { throw "Unexpected file count" }

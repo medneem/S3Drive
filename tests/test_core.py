@@ -88,6 +88,13 @@ class MountTests(unittest.TestCase):
         self.assertNotIn(p.secret_key, " ".join(args))
         self.assertNotIn(p.access_key, " ".join(args))
 
+    def test_volume_label_uses_exact_profile_name(self):
+        profile = sample(name="Личный сетевой диск")
+        args = mount_command(profile, "rclone.exe", Path("cache"), 12543)
+        label_index = args.index("--volname")
+        self.assertEqual(args[label_index + 1], "Личный сетевой диск")
+        self.assertNotIn("S3Drive - ", args[label_index + 1])
+
     def test_rclone_env_config_for_s3_qnap(self):
         env = remote_environment(sample())
         self.assertEqual(env["RCLONE_CONFIG_S3DRIVE_MOUNT_FORCE_PATH_STYLE"], "true")

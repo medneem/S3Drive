@@ -42,6 +42,21 @@ class ServiceTests(unittest.TestCase):
         self.assertNotIn(p.secret_key, cmd)
         self.assertNotIn(p.access_key, cmd)
 
+    def test_volume_label_uses_exact_profile_name_in_service(self):
+        profile = sample()
+        profile.name = "Личный сетевой диск"
+        command = service_command(
+            profile,
+            Path("C:/ProgramData/S3Drive/bin/rclone.exe"),
+            Path("C:/ProgramData/S3Drive/services/rclone.conf"),
+            Path("C:/ProgramData/S3Drive/services/cache"),
+            Path("C:/ProgramData/S3Drive/services/rclone.log"),
+            Path("C:/ProgramData/S3Drive/services/rc.htpasswd"),
+            45532,
+        )
+        self.assertIn('--volname "Личный сетевой диск"', command)
+        self.assertNotIn("S3Drive - Личный сетевой диск", command)
+
     def test_empty_bucket_mounts_s3_account_root_in_windows_service(self):
         profile = sample()
         profile.bucket = ""

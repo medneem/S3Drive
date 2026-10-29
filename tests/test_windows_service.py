@@ -86,6 +86,60 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(len(profile.name), 19)
         self.assertEqual(len(profile.name.encode("utf-8")), 36)
 
+    def test_explorer_label_override_preserves_full_russian_name_and_restores(self):
+        """Simulate HKLM without changing this runner's Windows registry."""
+        import sys
+        from unittest.mock import Mock
+        from windows_service import install_explorer_label, restore_explorer_label
+        profile = sample()
+        profile.name = "Личный сетевой диск"
+        fake = Mock()
+        fake.HKEY_LOCAL_MACHINE = 1
+        fake.KEY_READ = 0x20019
+        fake.KEY_WRITE = 0x20006
+        fake.REG_SZ = 1
+        values = {}
+
+        class Key:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+
+        fake.CreateKeyEx.return_value = Key()
+        fake.OpenKey.return_value = Key()
+
+        def get_value(key, name):
+            if name not in values:
+                raise FileNotFoundError(name)
+            return values[name]
+        def set_value(key, name, reserved, dtype, value):
+            values[name] = (value, dtype)
+        def delete_value(key, name):
+            del values[name]
+
+        fake.QueryValueEx.side_effect = get_value
+        fake.SetValueEx.side_effect = set_value
+        fake.DeleteValue.side_effect = delete_value
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch.dict(sys.modules, {"winreg": fake}):
+                with patch("windows_service.service_dir", return_value=Path(td)):
+                    with patch("windows_service.protect_file"):
+                        install_explorer_label(profile)
+                        self.assertEqual(values[""][0], "Личный сетевой диск")
+                        self.assertEqual(len(values[""][0]), 19)
+                        restore_explorer_label(profile.id)
+                        self.assertNotIn("", values)
+
+    def test_acl_argument_is_a_real_command_option_not_a_comment(self):
+        p = sample()
+        cmd = service_command(
+            p, Path("C:/rclone.exe"), Path("C:/rclone.conf"),
+            Path("C:/cache"), Path("C:/log"), Path("C:/auth"), 33333,
+        )
+        self.assertIn(" -o FileSecurity=D:P(A;;FA;;;WD)", cmd)
+
     def test_service_config_has_correct_qnap_path_style(self):
         p = sample()
         config = config_text(p)

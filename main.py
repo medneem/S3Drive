@@ -215,8 +215,9 @@ class MainWindow(QMainWindow):
     def new_profile(self):
         self.items.clearSelection()
         self.items.setCurrentRow(-1)
-        for widget in (self.name, self.endpoint, self.bucket, self.access, self.secret):
+        for widget in (self.endpoint, self.bucket, self.access, self.secret):
             widget.clear()
+        self.name.setText("Личный сетевой диск")
         self.drive.setCurrentText("S:")
         self.path_style.setChecked(True)
         self.shortcut_checkbox.setChecked(True)

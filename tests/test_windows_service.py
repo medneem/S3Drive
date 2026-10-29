@@ -70,6 +70,22 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("mount s3drive_mount: S:", command)
         self.assertNotIn("s3drive_mount:my-backup", command)
 
+    def test_service_rclone_binary_is_isolated_per_profile(self):
+        from windows_service import service_rclone_path
+        p1 = sample()
+        p2 = sample()
+        with patch("windows_service.service_dir", side_effect=lambda ident: Path("C:/ProgramData/S3Drive/services") / ident):
+            self.assertNotEqual(service_rclone_path(p1.id), service_rclone_path(p2.id))
+            self.assertEqual(service_rclone_path(p1.id).name, "rclone.exe")
+
+    def test_drive_label_registration_uses_exact_unicode_name(self):
+        from windows_service import drive_label_registry_path
+        self.assertTrue(drive_label_registry_path("S:").endswith(r"DriveIcons\S\DefaultLabel"))
+        profile = sample()
+        profile.name = "Личный сетевой диск"
+        self.assertEqual(len(profile.name), 19)
+        self.assertEqual(len(profile.name.encode("utf-8")), 36)
+
     def test_service_config_has_correct_qnap_path_style(self):
         p = sample()
         config = config_text(p)

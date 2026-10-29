@@ -219,10 +219,10 @@ class MainWindow(QMainWindow):
             widget.clear()
         self.drive.setCurrentText("S:")
         self.path_style.setChecked(True)
-        self.shortcut_checkbox.setChecked(False)
+        self.shortcut_checkbox.setChecked(True)
         self.open_checkbox.setChecked(False)
         self.background_checkbox.setChecked(False)
-        self.service_checkbox.setChecked(False)
+        self.service_checkbox.setChecked(True)
         self.region.setText("us-east-1")
         self.status.setText("Новый профиль. Заполните поля и нажмите «Сохранить».")
 

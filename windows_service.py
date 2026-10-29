@@ -266,7 +266,6 @@ def install_and_start(profile, source_rclone: Path) -> None:
     root = Path(os.environ["PROGRAMDATA"]) / "S3Drive"
     protect_directory(root)
     protect_directory(root / "services")
-    protect_directory(service_executable_dir())
     dest = service_dir(profile.id)
     protect_directory(dest)
     # Copy to administrator-only location: the service binary path must never
@@ -300,15 +299,20 @@ def install_and_start(profile, source_rclone: Path) -> None:
     cache = dest / "cache"
     cache.mkdir(exist_ok=True)
     log = dest / "rclone.log"
-    install_explorer_label(profile)
     cmd = service_command(profile, binary, config, cache, log, htpasswd, int(control["port"]))
     name = service_name(profile.id)
-    if installed is None:
-        _sc("create", name, "binPath=", cmd, "start=", "auto",
-            "obj=", "LocalSystem", "DisplayName=", "S3Drive " + profile.drive)
-    else:
-        _sc("config", name, "binPath=", cmd, "start=", "auto")
-    _sc("start", name)
+    install_explorer_label(profile)
+    try:
+        if installed is None:
+            _sc("create", name, "binPath=", cmd, "start=", "auto",
+                "obj=", "LocalSystem", "DisplayName=", "S3Drive " + profile.drive)
+        else:
+            _sc("config", name, "binPath=", cmd, "start=", "auto")
+        _sc("start", name)
+    except Exception:
+        # No phantom Explorer label if SCM rejected the new mount.
+        restore_explorer_label(profile.id)
+        raise
 
 
 def stop_service(profile_id: str) -> None:

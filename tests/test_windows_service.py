@@ -38,7 +38,9 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("S:", cmd)
         self.assertIn("--vfs-cache-mode writes", cmd)
         self.assertIn("--rc-htpasswd", cmd)
-        # rclone/WinFsp: FRFW grants read/write, but Windows Explorer\n        # requires DELETE access for removing files and directories.\n        self.assertIn("FileSecurity=D:P(A;;FA;;;WD)", cmd)\n        self.assertNotIn("FileSecurity=D:P(A;;FRFW;;;WD)", cmd)
+        # Must be a real command line option, not code hidden by \n in a comment.
+        self.assertIn(" -o FileSecurity=D:P(A;;FA;;;WD)", cmd)
+        self.assertNotIn("FileSecurity=D:P(A;;FRFW;;;WD)", cmd)
         self.assertNotIn(p.secret_key, cmd)
         self.assertNotIn(p.access_key, cmd)
 
@@ -54,7 +56,9 @@ class ServiceTests(unittest.TestCase):
             Path("C:/ProgramData/S3Drive/services/rc.htpasswd"),
             45532,
         )
-        self.assertIn('--volname "Личный сетевой диск"', command)
+        self.assertIn('--option "volname=Личный сетевой диск"', command)
+        self.assertNotIn('--volname ', command)
+        self.assertGreater(len(profile.name.encode("utf-8")), 32)
         self.assertNotIn("S3Drive - Личный сетевой диск", command)
 
     def test_empty_bucket_mounts_s3_account_root_in_windows_service(self):

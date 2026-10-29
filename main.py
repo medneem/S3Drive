@@ -21,6 +21,7 @@ from background import sessions_to_stop
 from drive_actions import (MountState, create_desktop_shortcut, disk_root,
                            mount_state, open_mounted_disk)
 from service_ui import run_admin
+from drive_labels import notify_explorer, read_native_volume_label
 from windows_service import service_status, SERVICE_RUNNING, SERVICE_STOPPED
 from startup import StartupStatus, ensure_winfsp
 from mounts import MountManager
@@ -100,6 +101,7 @@ class MainWindow(QMainWindow):
             "Ключи должны разрешать ListBuckets."
         )
         self.access = QLineEdit()
+        self.access.setEchoMode(QLineEdit.EchoMode.Password)
         self.secret = QLineEdit()
         self.secret.setEchoMode(QLineEdit.EchoMode.Password)
         self.drive = QComboBox()
@@ -340,6 +342,7 @@ class MainWindow(QMainWindow):
             return
         try:
             run_admin("remove", profile.id)
+            notify_explorer()
             QMessageBox.information(self, "S3Drive", "Служба удалена.")
         except Exception as exc:
             QMessageBox.warning(self, "Удаление службы", str(exc))
@@ -366,6 +369,7 @@ class MainWindow(QMainWindow):
                     QMessageBox.information(self, "S3Drive", "Служба уже запущена.")
                     return
                 run_admin("install", profile.id)
+                notify_explorer()
                 self.pending_mounts[profile.id] = (profile, time.monotonic())
                 self.status.setText(f"Подключение службы и диска {profile.drive}…")
             else:
@@ -393,6 +397,7 @@ class MainWindow(QMainWindow):
                     QMessageBox.information(self, "S3Drive", "Служба уже остановлена.")
                 else:
                     run_admin("stop", profile.id)
+                    notify_explorer()
             else:
                 self.mounts.stop(profile.id)
             self.pending_mounts.pop(profile.id, None)
@@ -427,6 +432,10 @@ class MainWindow(QMainWindow):
                     except Exception as exc:
                         problems.append(f"Не удалось открыть диск: {exc}")
                 message = f"Диск {profile.drive} успешно подключён."
+                native_label = read_native_volume_label(profile.drive)
+                if native_label and native_label != profile.name:
+                    message += (f"\nСистемная метка WinFsp: {native_label}. "
+                                "Полное имя дополнительно задано для Проводника Windows.")
                 if problems:
                     message += "\n\n" + "\n".join(problems)
                 QMessageBox.information(self, "S3Drive", message)

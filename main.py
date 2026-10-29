@@ -260,6 +260,10 @@ class MainWindow(QMainWindow):
             existing = next((p for p in self.profiles if p.id == profile.id), None)
             mounted = self.mounts.is_mounted(profile.id)
             svc = service_status(profile.id)
+            if svc is not None and existing is not None and profile.drive != existing.drive:
+                raise ValueError(
+                    "Чтобы сменить букву диска, сначала остановите и удалите старую службу."
+                )
             if svc is not None and existing is not None and profile.service_mode != existing.service_mode:
                 if svc == SERVICE_RUNNING:
                     raise ValueError("Остановите службу перед сменой режима подключения.")

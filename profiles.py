@@ -31,6 +31,8 @@ class Profile:
     def validate(self) -> None:
         if not self.name.strip():
             raise ValueError("Введите название подключения.")
+        if len(self.name) > 128 or any(ord(ch) < 32 for ch in self.name):
+            raise ValueError("Название не должно превышать 128 символов или содержать управляющие символы.")
         parsed = urlsplit(self.endpoint)
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
             raise ValueError("Endpoint должен начинаться с http:// или https://.")

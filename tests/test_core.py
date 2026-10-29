@@ -66,6 +66,14 @@ class ProfileTests(unittest.TestCase):
             store.save([profile])
             self.assertEqual(store.load()[0].bucket, "")
 
+    def test_invalid_name_control_characters_rejected_before_service_install(self):
+        with self.assertRaises(ValueError):
+            sample(name="Disk\\nother")
+
+    def test_long_name_is_rejected_before_windows_mount(self):
+        with self.assertRaises(ValueError):
+            sample(name="N" * 129)
+
     def test_invalid_endpoint_cannot_embed_credentials(self):
         with self.assertRaises(ValueError):
             sample(endpoint="http://user:password@nas.local:8010")

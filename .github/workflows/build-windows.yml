@@ -43,7 +43,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          python -m compileall -q main.py profiles.py mounts.py background.py drive_labels.py windows_service.py service_admin.py service_ui.py dependencies.py startup.py version.py scripts tests
+          python -m compileall -q main.py profiles.py mounts.py background.py drive_labels.py windows_service.py service_admin.py service_ui.py single_instance.py dependencies.py startup.py version.py scripts tests
           if ($LASTEXITCODE -ne 0) { throw "Python syntax checks failed" }
           for ($pass = 1; $pass -le 3; $pass++) {
             Write-Host "=== S3Drive test verification $pass/3 ==="

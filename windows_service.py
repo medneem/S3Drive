@@ -54,6 +54,73 @@ def service_executable_dir() -> Path:
     return Path(os.environ["PROGRAMDATA"]) / "S3Drive" / "bin"
 
 
+def service_rclone_path(profile_id: str) -> Path:
+    """Private per-profile service binary; never replace a running service's EXE."""
+    return service_dir(profile_id) / "rclone.exe"
+
+
+def drive_label_registry_path(drive: str) -> str:
+    """Microsoft-documented Explorer label override for a mapped drive letter."""
+    if not re.fullmatch(r"[A-Z]:", drive):
+        raise ValueError("Некорректная буква диска.")
+    return (r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\DriveIcons"
+            + "\\" + drive[0] + r"\DefaultLabel")
+
+
+def install_explorer_label(profile) -> None:
+    """Apply full Unicode name in Explorer (HKLM), preserving previous value."""
+    import winreg
+    root = service_dir(profile.id)
+    backup_path = root / "explorer_label_backup.json"
+    key_name = drive_label_registry_path(profile.drive)
+    with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_name, 0,
+                            winreg.KEY_READ | winreg.KEY_WRITE) as key:
+        if not backup_path.exists():
+            try:
+                original, original_type = winreg.QueryValueEx(key, "")
+                had_value = True
+            except FileNotFoundError:
+                original, original_type, had_value = "", winreg.REG_SZ, False
+            backup_path.write_text(
+                json.dumps({"drive": profile.drive, "had_value": had_value,
+                            "original": original, "original_type": original_type,
+                            "set_to": profile.name}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            protect_file(backup_path)
+        else:
+            backup = json.loads(backup_path.read_text(encoding="utf-8"))
+            if backup["drive"] != profile.drive:
+                raise RuntimeError("Буква диска изменилась: сначала удалите старую службу.")
+            backup["set_to"] = profile.name
+            backup_path.write_text(json.dumps(backup, ensure_ascii=False), encoding="utf-8")
+            protect_file(backup_path)
+        winreg.SetValueEx(key, "", 0, winreg.REG_SZ, profile.name)
+
+
+def restore_explorer_label(profile_id: str) -> None:
+    """Undo only our own override, never overwrite a newer third-party change."""
+    import winreg
+    backup_path = service_dir(profile_id) / "explorer_label_backup.json"
+    if not backup_path.is_file():
+        return
+    data = json.loads(backup_path.read_text(encoding="utf-8"))
+    path = drive_label_registry_path(data["drive"])
+    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, 0,
+                        winreg.KEY_READ | winreg.KEY_WRITE) as key:
+        try:
+            current, _ = winreg.QueryValueEx(key, "")
+        except FileNotFoundError:
+            current = None
+        if current != data["set_to"]:
+            return
+        if data["had_value"]:
+            winreg.SetValueEx(key, "", 0, data["original_type"], data["original"])
+        else:
+            winreg.DeleteValue(key, "")
+    backup_path.unlink()
+
+
 def validate_service_profile(profile) -> None:
     profile.validate()
     uuid.UUID(profile.id)
@@ -95,7 +162,9 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
         profile.drive, "--config", str(config), "--vfs-cache-mode", "writes",
         "--cache-dir", str(cache), "--log-file", str(log), "--log-level", "INFO",
         "--volname", profile.name,
-        # SYSTEM owns the mount. Grant Explorer users delete rights as well\n        # as read/write; FRFW alone fails Windows directory deletion.\n        "-o", "FileSecurity=D:P(A;;FA;;;WD)",
+        # Windows Explorer needs DELETE permissions as well as read/write.
+        # This is a public mount: WD=Everyone, as in previous releases.
+        "-o", "FileSecurity=D:P(A;;FA;;;WD)",
         "--rc", "--rc-addr", f"127.0.0.1:{port}",
         "--rc-htpasswd", str(htpasswd),
     ])
@@ -203,9 +272,16 @@ def install_and_start(profile, source_rclone: Path) -> None:
     # Copy to administrator-only location: the service binary path must never
     # point to a user-writable portable ZIP directory.
     import shutil
-    binary = service_executable_dir() / "rclone.exe"
-    if not binary.is_file():
-        shutil.copy2(source_rclone, binary)
+    binary = service_rclone_path(profile.id)
+    # Each service gets its own rclone copy; do not overwrite an EXE used
+    # by another running S3Drive service.
+    staged = dest / "rclone.exe.new"
+    try:
+        shutil.copy2(source_rclone, staged)
+        protect_file(staged)
+        os.replace(staged, binary)
+    finally:
+        staged.unlink(missing_ok=True)
     protect_file(binary)
     config = dest / "rclone.conf"
     config.write_text(config_text(profile), encoding="utf-8")
@@ -224,6 +300,7 @@ def install_and_start(profile, source_rclone: Path) -> None:
     cache = dest / "cache"
     cache.mkdir(exist_ok=True)
     log = dest / "rclone.log"
+    install_explorer_label(profile)
     cmd = service_command(profile, binary, config, cache, log, htpasswd, int(control["port"]))
     name = service_name(profile.id)
     if installed is None:
@@ -255,5 +332,6 @@ def remove_service(profile_id: str) -> None:
     if state != SERVICE_STOPPED:
         raise RuntimeError("Сначала остановите службу и дождитесь отключения диска.")
     _sc("delete", service_name(profile_id))
+    restore_explorer_label(profile_id)
     # Keep the old VFS cache and log for recovery/debugging; credentials remain
     # protected under ProgramData and are not silently discarded.

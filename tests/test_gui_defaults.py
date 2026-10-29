@@ -18,6 +18,7 @@ class NewProfileDefaultsTests(unittest.TestCase):
     def test_new_profile_has_user_selected_defaults(self):
         gui = stub_window()
         MainWindow.new_profile(gui)
+        gui.name.setText.assert_called_once_with("Личный сетевой диск")
         gui.path_style.setChecked.assert_called_once_with(True)
         gui.shortcut_checkbox.setChecked.assert_called_once_with(True)
         gui.open_checkbox.setChecked.assert_called_once_with(False)

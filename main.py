@@ -93,7 +93,12 @@ class MainWindow(QMainWindow):
         self.endpoint = QLineEdit()
         self.endpoint.setPlaceholderText("http://nas.local:8010")
         self.bucket = QLineEdit()
-        self.bucket.setPlaceholderText("Имя бакета")
+        self.bucket.setPlaceholderText("Пусто — показать все доступные бакеты")
+        self.bucket.setToolTip(
+            "Необязательно. Без имени бакета монтируется корень S3: "
+            "в Проводнике отображаются доступные бакеты как папки. "
+            "Ключи должны разрешать ListBuckets."
+        )
         self.access = QLineEdit()
         self.secret = QLineEdit()
         self.secret.setEchoMode(QLineEdit.EchoMode.Password)
@@ -104,7 +109,7 @@ class MainWindow(QMainWindow):
         self.path_style.setChecked(True)
         self.region = QLineEdit("us-east-1")
         for label, widget in (
-            ("Название:", self.name), ("Endpoint:", self.endpoint), ("Бакет:", self.bucket),
+            ("Название:", self.name), ("Endpoint:", self.endpoint), ("Бакет (необязательно):", self.bucket),
             ("Access Key:", self.access), ("Secret Key:", self.secret),
             ("Буква диска:", self.drive), ("Регион:", self.region),
         ):

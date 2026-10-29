@@ -40,8 +40,10 @@ class Profile:
             _ = parsed.port
         except ValueError as exc:
             raise ValueError("Некорректный порт Endpoint.") from exc
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,61}[A-Za-z0-9]", self.bucket):
-            raise ValueError("Укажите корректное имя S3-бакета (2–63 символа).")
+        # An empty bucket means the S3 account root (list accessible buckets).
+        # Nonempty bucket names retain their existing validation semantics.
+        if self.bucket and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,61}[A-Za-z0-9]", self.bucket):
+            raise ValueError("Укажите корректное имя S3-бакета (2–63 символа) или оставьте поле пустым.")
         if not re.fullmatch(r"[A-Z]:", self.drive):
             raise ValueError("Буква диска должна иметь вид S:.")
         if not self.access_key or not self.secret_key:

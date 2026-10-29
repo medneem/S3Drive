@@ -95,7 +95,7 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
         profile.drive, "--config", str(config), "--vfs-cache-mode", "writes",
         "--cache-dir", str(cache), "--log-file", str(log), "--log-level", "INFO",
         "--volname", f"S3Drive - {profile.name}",
-        "-o", "FileSecurity=D:P(A;;FRFW;;;WD)",
+        # SYSTEM owns the mount. Grant Explorer users delete rights as well\n        # as read/write; FRFW alone fails Windows directory deletion.\n        "-o", "FileSecurity=D:P(A;;FA;;;WD)",
         "--rc", "--rc-addr", f"127.0.0.1:{port}",
         "--rc-htpasswd", str(htpasswd),
     ])

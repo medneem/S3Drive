@@ -24,6 +24,7 @@ from service_ui import run_admin
 from drive_labels import notify_explorer, read_native_volume_label
 from windows_service import service_status, SERVICE_RUNNING, SERVICE_STOPPED
 from startup import StartupStatus, ensure_winfsp
+from single_instance import SingleInstance
 from mounts import MountManager
 from profiles import Profile, ProfileStore, app_data_dir, config_path
 from version import APP_VERSION
@@ -568,14 +569,24 @@ def startup_ready() -> bool:
 
 
 def main() -> int:
-    app = QApplication(sys.argv)
-    if not startup_ready():
-        return 1
-    app.setApplicationName("S3Drive")
-    app.setWindowIcon(app_icon())
-    window = MainWindow()
-    window.show()
-    return app.exec()
+    # Acquire before checking WinFsp or creating the main window. This also
+    # prevents two simultaneous first-run installer dialogs.
+    with SingleInstance() as instance:
+        app = QApplication(sys.argv)
+        if not instance.acquired:
+            QMessageBox.information(
+                None, "S3Drive уже запущен",
+                "S3Drive уже запущен.\n"
+                "Закройте существующее окно программы, если хотите открыть её заново.",
+            )
+            return 0
+        if not startup_ready():
+            return 1
+        app.setApplicationName("S3Drive")
+        app.setWindowIcon(app_icon())
+        window = MainWindow()
+        window.show()
+        return app.exec()
 
 
 if __name__ == "__main__":

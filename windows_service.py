@@ -104,6 +104,7 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
 def _protect_acl(path: Path, *, directory: bool) -> None:
     """Replace (not merge) ACL and owner to prevent service binary tampering."""
     import win32con
+    import win32file
     import win32security
     if path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
         raise RuntimeError("Отказано: каталог службы является ссылкой или junction.")
@@ -118,7 +119,7 @@ def _protect_acl(path: Path, *, directory: bool) -> None:
              if directory else 0)
     for sid in (system_sid, admin_sid):
         acl.AddAccessAllowedAceEx(
-            win32security.ACL_REVISION, flags, win32con.FILE_ALL_ACCESS, sid,
+            win32security.ACL_REVISION, flags, win32file.FILE_ALL_ACCESS, sid,
         )
     win32security.SetNamedSecurityInfo(
         str(path), win32security.SE_FILE_OBJECT,

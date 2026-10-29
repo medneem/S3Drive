@@ -54,6 +54,25 @@ class ServiceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             config_text(p)
 
+    def test_acl_protect_uses_real_pywin32_file_access_mask(self):
+        # Regression for S3Drive v0.1.18:
+        # AttributeError: module 'win32con' has no attribute 'FILE_ALL_ACCESS'.
+        import os
+        if os.name != "nt":
+            self.skipTest("Windows-only pywin32 ACL test")
+        import win32file
+        import win32security
+        from windows_service import _protect_acl
+        with tempfile.TemporaryDirectory() as folder:
+            file = Path(folder) / "s3-secret.conf"
+            file.write_text("test", encoding="utf-8")
+            with patch("win32security.SetNamedSecurityInfo") as setter:
+                _protect_acl(file, directory=False)
+            acl = setter.call_args.args[5]
+            self.assertEqual(acl.GetAceCount(), 2)
+            for i in range(2):
+                self.assertEqual(acl.GetAce(i)[1], win32file.FILE_ALL_ACCESS)
+
     def test_stop_fails_with_pending_uploads(self):
         with patch("windows_service._control_request", return_value={
             "diskCache": {"uploadsQueued": 1, "uploadsInProgress": 0, "erroredFiles": 0}

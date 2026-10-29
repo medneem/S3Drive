@@ -36,6 +36,36 @@ class ProfileTests(unittest.TestCase):
     def test_qnap_http_endpoint_with_path_style_is_valid(self):
         self.assertEqual(sample().endpoint, "http://nas.local:8010")
 
+    def test_empty_bucket_mounts_s3_account_root(self):
+        profile = sample(bucket="")
+        profile.validate()
+        self.assertEqual(
+            mount_command(profile, "rclone.exe", Path("cache"), 12543)[2],
+            "s3drive_mount:",
+        )
+
+    def test_blank_bucket_with_spaces_is_not_accepted(self):
+        with self.assertRaises(ValueError):
+            sample(bucket="   ")
+
+    def test_specific_bucket_is_still_supported(self):
+        profile = sample(bucket="my-backup")
+        self.assertEqual(
+            mount_command(profile, "rclone.exe", Path("cache"), 12543)[2],
+            "s3drive_mount:my-backup",
+        )
+
+    def test_root_profile_survives_config_round_trip(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = ProfileStore(
+                Path(td) / "config.json",
+                encrypt=lambda value: "protected:" + value[::-1],
+                decrypt=lambda value: value.removeprefix("protected:")[::-1],
+            )
+            profile = sample(bucket="")
+            store.save([profile])
+            self.assertEqual(store.load()[0].bucket, "")
+
     def test_invalid_endpoint_cannot_embed_credentials(self):
         with self.assertRaises(ValueError):
             sample(endpoint="http://user:password@nas.local:8010")

@@ -42,6 +42,19 @@ class ServiceTests(unittest.TestCase):
         self.assertNotIn(p.secret_key, cmd)
         self.assertNotIn(p.access_key, cmd)
 
+    def test_empty_bucket_mounts_s3_account_root_in_windows_service(self):
+        profile = sample()
+        profile.bucket = ""
+        command = service_command(
+            profile, Path("C:/ProgramData/S3Drive/bin/rclone.exe"),
+            Path("C:/ProgramData/S3Drive/services/rclone.conf"),
+            Path("C:/ProgramData/S3Drive/services/cache"),
+            Path("C:/ProgramData/S3Drive/services/rclone.log"),
+            Path("C:/ProgramData/S3Drive/services/rc.htpasswd"), 45532,
+        )
+        self.assertIn("mount s3drive_mount: S:", command)
+        self.assertNotIn("s3drive_mount:my-backup", command)
+
     def test_service_config_has_correct_qnap_path_style(self):
         p = sample()
         config = config_text(p)

@@ -43,7 +43,7 @@ def mount_command(profile: Profile, executable: str, cache_dir: Path, port: int)
         executable, "mount", f"{REMOTE}:{profile.bucket}", profile.drive,
         "--vfs-cache-mode", "writes",
         "--cache-dir", str(cache_dir),
-        "--volname", f"S3Drive - {profile.name}",
+        "--volname", profile.name,
         "--rc", "--rc-addr", f"127.0.0.1:{port}",
         "--log-level", "INFO",
     ]

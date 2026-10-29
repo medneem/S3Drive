@@ -39,10 +39,17 @@ jobs:
           python scripts/stamp_version.py "$env:BASE_VERSION" "$env:GITHUB_RUN_NUMBER"
           python -c "from version import APP_VERSION; print(APP_VERSION)"
 
-      - name: Unit tests and syntax checks
+      - name: Three independent verification passes
+        shell: pwsh
         run: |
-          python -m compileall -q main.py profiles.py mounts.py background.py windows_service.py service_admin.py service_ui.py dependencies.py startup.py version.py scripts tests
-          python -m unittest discover -s tests -v
+          $ErrorActionPreference = "Stop"
+          python -m compileall -q main.py profiles.py mounts.py background.py drive_labels.py windows_service.py service_admin.py service_ui.py dependencies.py startup.py version.py scripts tests
+          if ($LASTEXITCODE -ne 0) { throw "Python syntax checks failed" }
+          for ($pass = 1; $pass -le 3; $pass++) {
+            Write-Host "=== S3Drive test verification $pass/3 ==="
+            python -m unittest discover -s tests -v
+            if ($LASTEXITCODE -ne 0) { throw "Verification pass $pass failed" }
+          }
 
       - name: Build icon
         run: python scripts/build_icon.py

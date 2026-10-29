@@ -161,7 +161,10 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
         str(rclone), "mount", "s3drive_mount:" + profile.bucket,
         profile.drive, "--config", str(config), "--vfs-cache-mode", "writes",
         "--cache-dir", str(cache), "--log-file", str(log), "--log-level", "INFO",
-        "--volname", profile.name,
+        # rclone v1.75.2 SetVolumeName uses len(vol) > 32, i.e. UTF-8 BYTES,
+        # and slices the name before WinFsp receives it. Passing the
+        # native FUSE option bypasses that lossy rclone function.
+        "--option", "volname=" + profile.name,
         # Windows Explorer needs DELETE permissions as well as read/write.
         # This is a public mount: WD=Everyone, as in previous releases.
         "-o", "FileSecurity=D:P(A;;FA;;;WD)",

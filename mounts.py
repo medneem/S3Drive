@@ -43,7 +43,10 @@ def mount_command(profile: Profile, executable: str, cache_dir: Path, port: int)
         executable, "mount", f"{REMOTE}:{profile.bucket}", profile.drive,
         "--vfs-cache-mode", "writes",
         "--cache-dir", str(cache_dir),
-        "--volname", profile.name,
+        # rclone v1.75.2 SetVolumeName uses len(vol) > 32, i.e. UTF-8 BYTES,
+        # and slices the name before WinFsp receives it. Passing the
+        # native FUSE option bypasses that lossy rclone function.
+        "--option", "volname=" + profile.name,
         "--rc", "--rc-addr", f"127.0.0.1:{port}",
         "--log-level", "INFO",
     ]

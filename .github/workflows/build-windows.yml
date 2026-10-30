@@ -129,6 +129,51 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Build antivirus diagnostic onedir
+        if: github.event_name != 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          # The onefile bootloader extracts native modules to a temporary
+          # _MEI folder. Keep a separate transparent layout for AV diagnosis.
+          python -m PyInstaller --noconfirm --clean --onedir --noupx --windowed --name S3Drive --version-file windows_version_info.txt --icon assets/app.ico --add-data "assets/app.svg;assets" main.py
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller onedir build failed" }
+          if (-not (Test-Path "dist/S3Drive/S3Drive.exe" -PathType Leaf)) { throw "Missing onedir S3Drive.exe" }
+          if (-not (Test-Path "dist/S3Drive/_internal" -PathType Container)) { throw "Missing onedir dependencies" }
+
+      - name: Package antivirus diagnostic archive
+        if: github.event_name != 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = (python -c "from version import APP_VERSION; print(APP_VERSION)").Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Unable to read stamped APP_VERSION" }
+          $folder = "diagnostic/S3Drive"
+          New-Item -ItemType Directory -Force $folder | Out-Null
+          Copy-Item "dist/S3Drive/*" $folder -Recurse -Force
+          # Preserve the traditional portable layout (config.json beside EXE).
+          # Reuse the verified dependencies from the regular package, but not
+          # its onefile S3Drive.exe.
+          Get-ChildItem "release/S3Drive" -File |
+            Where-Object { $_.Name -ne "S3Drive.exe" } |
+            Copy-Item -Destination $folder -Force
+          if (-not (Test-Path "$folder/S3DriveAdmin.exe" -PathType Leaf)) { throw "Missing admin helper" }
+          if (-not (Test-Path "$folder/rclone.exe" -PathType Leaf)) { throw "Missing rclone" }
+          if (-not (Test-Path "$folder/_internal" -PathType Container)) { throw "Missing runtime dependencies" }
+          $archive = "S3Drive-v$version-windows-x64-onedir.zip"
+          Compress-Archive -Path "$folder/*" -DestinationPath $archive -CompressionLevel Optimal -Force
+          if (-not (Test-Path $archive -PathType Leaf)) { throw "Missing diagnostic archive" }
+          Write-Host "Diagnostic EXE SHA256:"
+          Get-FileHash -Path "$folder/S3Drive.exe" -Algorithm SHA256 | Format-List
+
+      - name: Upload antivirus diagnostic archive
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: S3Drive-windows-x64-onedir-${{ github.run_id }}
+          path: S3Drive-v*-windows-x64-onedir.zip
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: Publish GitHub Release
     needs: windows-portable

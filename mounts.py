@@ -240,20 +240,14 @@ class MountManager:
         # in the VFS cache that has not reached the S3 backend.
         try:
             stats = self._rc(session, "vfs/stats")
-            cache = stats["diskCache"]
-            queued = int(cache["uploadsQueued"])
-            active = int(cache["uploadsInProgress"])
-            errors = int(cache["erroredFiles"])
-        except Exception as exc:
+            ensure_cache_idle(stats)
+        except (KeyError, TypeError, ValueError, OSError) as exc:
             raise RuntimeError(
-                "Не удалось проверить очередь записи rclone; диск не отключён. "
+                "Не удалось проверить состояние VFS rclone; диск не отключён. "
                 "Проверьте журнал и повторите попытку."
             ) from exc
-        if queued or active or errors:
-            raise RuntimeError(
-                f"Диск не отключён: ожидают загрузки {queued}, передаются {active}, "
-                f"файлов с ошибками {errors}. Дождитесь завершения записи и проверьте ошибки."
-            )
+        except RuntimeError as exc:
+            raise RuntimeError("Диск не отключён: " + str(exc)) from exc
         try:
             self._rc(session, "core/quit", timeout=5)
         except Exception:

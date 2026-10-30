@@ -82,6 +82,46 @@ class ProfileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             sample(bucket="bucket/../../secret")
 
+    def test_invalid_profile_identifier_cannot_escape_cache_or_logs(self):
+        from profiles import Profile
+        invalid = ("../outside", "../../secret", "profile-1", "", "abc\\other", 42,
+                   "urn:uuid:11111111-2222-4333-8444-555555555555",
+                   "{11111111-2222-4333-8444-555555555555}")
+        for bad_id in invalid:
+            with self.subTest(id=bad_id):
+                values = vars(sample()).copy()
+                values["id"] = bad_id
+                with self.assertRaisesRegex(ValueError, "идентификатор"):
+                    Profile(**values).validate()
+
+    def test_duplicate_profile_ids_cannot_be_loaded(self):
+        p = sample()
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.json"
+            store = self.make_store(path)
+            doc = []
+            record = asdict(p)
+            record["access_key"] = "protected:" + record["access_key"][::-1]
+            record["secret_key"] = "protected:" + record["secret_key"][::-1]
+            doc.append(record)
+            doc.append({**record, "drive": "T:"})
+            path.write_text(json.dumps({"profiles": doc}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "дубликат|Дубликат"):
+                store.load()
+            self.assertTrue(path.is_file())
+
+    def test_duplicate_ids_cannot_be_saved(self):
+        p = sample()
+        from dataclasses import replace
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.json"
+            store = self.make_store(path)
+            store.save([p])
+            before = path.read_bytes()
+            with self.assertRaisesRegex(ValueError, "Дубликат"):
+                store.save([p, replace(p, drive="T:")])
+            self.assertEqual(path.read_bytes(), before)
+
     def test_invalid_drive_is_rejected(self):
         with self.assertRaises(ValueError):
             sample(drive="S:\\Windows")

@@ -210,6 +210,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_stop_fails_with_pending_uploads(self):
         with patch("windows_service._control_request", return_value={
+            "inUse": 0,
             "diskCache": {"uploadsQueued": 1, "uploadsInProgress": 0, "erroredFiles": 0}
         }):
             with self.assertRaisesRegex(RuntimeError, "Нельзя остановить"):
@@ -222,10 +223,33 @@ class ServiceTests(unittest.TestCase):
 
     def test_stop_allowed_when_queue_empty(self):
         with patch("windows_service._control_request", return_value={
+            "inUse": 0,
             "diskCache": {"uploadsQueued": 0, "uploadsInProgress": 0, "erroredFiles": 0}
         }):
             ensure_vfs_idle({"port": 42, "password": "secret"})
 
+
+    def test_open_files_block_service_stop_without_sc_call(self):
+        from windows_service import stop_service
+        with patch("windows_service.service_status", return_value=SERVICE_RUNNING):
+            with patch("windows_service.service_dir", return_value=Path("C:/fixture")):
+                with patch("pathlib.Path.read_text", return_value='{"port":42,"password":"pw"}'):
+                    with patch("windows_service._control_request", return_value={
+                        "inUse": 2,
+                        "diskCache": {"uploadsQueued": 0, "uploadsInProgress": 0,
+                                      "erroredFiles": 0},
+                    }):
+                        with patch("windows_service._sc") as sc:
+                            with self.assertRaisesRegex(RuntimeError, "открыт"):
+                                stop_service(sample().id)
+                            sc.assert_not_called()
+
+    def test_missing_in_use_counter_blocks_service_stop(self):
+        with patch("windows_service._control_request", return_value={
+            "diskCache": {"uploadsQueued": 0, "uploadsInProgress": 0, "erroredFiles": 0},
+        }):
+            with self.assertRaises(KeyError):
+                ensure_vfs_idle({"port": 42, "password": "pw"})
 
     def test_cache_clear_refuses_stopped_service(self):
         from windows_service import clear_service_cache

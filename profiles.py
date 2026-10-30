@@ -29,6 +29,16 @@ class Profile:
     service_mode: bool = False
 
     def validate(self) -> None:
+        # Profile ID also forms filesystem paths (cache, logs and service dir).
+        # Fail before any path construction or disk I/O, including legacy JSON.
+        if not isinstance(self.id, str):
+            raise ValueError("Некорректный идентификатор подключения (UUID).")
+        try:
+            canonical_id = str(uuid.UUID(self.id))
+        except (ValueError, AttributeError) as exc:
+            raise ValueError("Некорректный идентификатор подключения (UUID).") from exc
+        if self.id.lower() != canonical_id:
+            raise ValueError("Некорректный идентификатор подключения (UUID).")
         if not self.name.strip():
             raise ValueError("Введите название подключения.")
         if len(self.name) > 128 or any(ord(ch) < 32 for ch in self.name):
@@ -103,6 +113,7 @@ class ProfileStore:
         if not isinstance(records, list):
             raise ValueError("Профили должны быть массивом JSON.")
         profiles = []
+        seen_ids: set[str] = set()
         for record in records:
             if not isinstance(record, dict):
                 raise ValueError("Каждый профиль должен быть JSON-объектом.")
@@ -111,6 +122,10 @@ class ProfileStore:
             values["secret_key"] = self.decrypt(values["secret_key"])
             profile = Profile(**values)
             profile.validate()
+            normalized_id = str(uuid.UUID(profile.id))
+            if normalized_id in seen_ids:
+                raise ValueError("Дубликат идентификатора подключения в config.json.")
+            seen_ids.add(normalized_id)
             profiles.append(profile)
         return profiles
 
@@ -133,8 +148,13 @@ class ProfileStore:
 
     def save(self, profiles: list[Profile]) -> None:
         records = []
+        seen_ids: set[str] = set()
         for profile in profiles:
             profile.validate()
+            normalized_id = str(uuid.UUID(profile.id))
+            if normalized_id in seen_ids:
+                raise ValueError("Дубликат идентификатора подключения в config.json.")
+            seen_ids.add(normalized_id)
             record = asdict(profile)
             record["access_key"] = self.encrypt(profile.access_key)
             record["secret_key"] = self.encrypt(profile.secret_key)

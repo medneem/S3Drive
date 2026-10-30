@@ -286,17 +286,12 @@ def _control_request(port: int, password: str, method: str) -> dict:
 
 
 def ensure_vfs_idle(control: dict) -> None:
-    """Fail closed if VFS is unavailable, dirty, or has upload errors."""
+    """Fail closed on VFS write queue, errors or files that remain open."""
     stats = _control_request(control["port"], control["password"], "vfs/stats")
-    disk = stats["diskCache"]
-    queued = int(disk["uploadsQueued"])
-    active = int(disk["uploadsInProgress"])
-    errors = int(disk["erroredFiles"])
-    if queued or active or errors:
-        raise RuntimeError(
-            f"Нельзя остановить службу: в очереди {queued}, передаются {active}, "
-            f"ошибок загрузки {errors}. Дождитесь завершения записи."
-        )
+    try:
+        ensure_cache_idle(stats)
+    except RuntimeError as exc:
+        raise RuntimeError("Нельзя остановить службу: " + str(exc)) from exc
 
 
 def install_and_start(profile, source_rclone: Path) -> None:

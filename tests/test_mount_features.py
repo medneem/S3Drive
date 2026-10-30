@@ -12,7 +12,7 @@ from profiles import Profile, ProfileStore
 
 def profile():
     return Profile(
-        id="test-id", name="QNAP", endpoint="http://nas.local:8010",
+        id="11111111-2222-4333-8444-555555555555", name="QNAP", endpoint="http://nas.local:8010",
         bucket="my-backup", access_key="access-fixture", secret_key="secret-fixture", drive="S:",
     )
 

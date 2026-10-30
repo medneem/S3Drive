@@ -106,7 +106,7 @@ class WindowsS3DeletionTests(unittest.TestCase):
         )
 
     @contextlib.contextmanager
-    def mounted(self, *, bucket, dir_cache_time="1h"):
+    def mounted(self, *, bucket, dir_cache_time=None):
         """Spawn the SAME rclone mount args used by the S3Drive GUI."""
         profile = Profile(
             id=str(uuid.uuid4()), name="S3Drive CI", endpoint=self.endpoint,
@@ -117,13 +117,15 @@ class WindowsS3DeletionTests(unittest.TestCase):
         cache.mkdir()
         port = free_port()
         log_path = self.folder / ("rclone-" + uuid.uuid4().hex + ".log")
+        # Use production defaults for dir cache / polling unless the
+        # comparison case explicitly requests 0s.
         cmd = mount_command(profile, str(self.rclone), cache, port) + [
-            "--dir-cache-time", dir_cache_time,
-            "--poll-interval", "0",
             "--log-level", "DEBUG",
             "--log-file", str(log_path),
             "--rc-no-auth",
         ]
+        if dir_cache_time is not None:
+            cmd.extend(["--dir-cache-time", dir_cache_time])
         env = dict(os.environ)
         env.update(remote_environment(profile))
         # rclone must NOT fall back to user config or real AWS credentials.

@@ -90,7 +90,7 @@ class NewProfileDefaultsTests(unittest.TestCase):
         ui = SimpleNamespace(
             monitor_pending=False, profiles=[other, running],
             mounts=Mock(), transfer_popup_profile=None, transfer_popup=None,
-            monitor_index=0,
+            monitor_index=0, on_transfers=Mock(),
         )
         with patch("main.service_status",
                    side_effect=lambda pid: 4 if pid == "running" else 1):

@@ -74,19 +74,20 @@ class GUIStartupTests(unittest.TestCase):
                             window.assert_not_called()
                             message.information.assert_called_once()
 
-    def test_tray_startup_does_not_show_main_window(self):
+    def test_old_tray_autostart_cleans_registry_without_opening_gui(self):
         import main as desktop
         with patch.object(desktop, "SingleInstance") as guard:
             guard.return_value.__enter__.return_value.acquired = True
             with patch.object(desktop, "QApplication") as app:
-                with patch.object(desktop, "startup_ready", return_value=True):
-                    with patch.object(desktop, "MainWindow") as window:
-                        with patch.object(desktop, "app_icon"):
+                with patch.object(desktop, "remove_legacy_tray_autostart") as cleanup:
+                    with patch.object(desktop, "startup_ready") as startup_check:
+                        with patch.object(desktop, "MainWindow") as window:
                             with patch.object(desktop.sys, "argv", ["S3Drive.exe", "--tray"]):
-                                desktop.main()
-                                window.assert_called_once()
-                                window.return_value.show.assert_not_called()
-                                app.return_value.exec.assert_called_once()
+                                self.assertEqual(desktop.main(), 0)
+                                cleanup.assert_called_once_with()
+                                startup_check.assert_not_called()
+                                window.assert_not_called()
+                                app.return_value.exec.assert_not_called()
 
     def test_first_launch_still_uses_regular_gui_startup(self):
         import main as desktop

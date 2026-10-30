@@ -55,31 +55,15 @@ class NewProfileDefaultsTests(unittest.TestCase):
         self.assertNotIn('self.transfer_label = QLabel', source)
 
 
-    def test_closing_main_window_hides_to_tray_and_keeps_monitor_active(self):
-        from main import MainWindow
-        from unittest.mock import Mock
-        from types import SimpleNamespace
-        ui = SimpleNamespace(
-            tray=Mock(), quitting=False, hide=Mock(),
-            tray_notice_shown=True,
-        )
-        ui.tray.isVisible.return_value = True
-        event = Mock()
-        MainWindow.closeEvent(ui, event)
-        event.ignore.assert_called_once_with()
-        ui.hide.assert_called_once_with()
-
-    def test_user_can_explicitly_quit_from_tray(self):
-        from main import MainWindow
-        from unittest.mock import Mock, patch
-        from types import SimpleNamespace
-        ui = SimpleNamespace(quitting=False, close=Mock(return_value=True), tray=Mock())
-        with patch("main.QApplication") as app:
-            MainWindow.exit_from_tray(ui)
-        self.assertTrue(ui.quitting)
-        ui.close.assert_called_once_with()
-        ui.tray.hide.assert_called_once_with()
-        app.quit.assert_called_once_with()
+    def test_window_closes_normally_and_does_not_hide_to_tray(self):
+        import inspect
+        import main as desktop
+        source = inspect.getsource(desktop.MainWindow)
+        self.assertNotIn("QSystemTrayIcon", source)
+        self.assertNotIn("self.tray", source)
+        self.assertNotIn("setQuitOnLastWindowClosed(False)", source)
+        self.assertNotIn("self.hide()", inspect.getsource(desktop.MainWindow.closeEvent))
+        self.assertIn("self.hide_transfer_popup()", inspect.getsource(desktop.MainWindow.closeEvent))
 
     def test_monitor_checks_running_service_even_if_other_profile_is_selected(self):
         from main import MainWindow
@@ -106,7 +90,7 @@ class NewProfileDefaultsTests(unittest.TestCase):
         from main import MainWindow
         source = inspect.getsource(MainWindow)
         self.assertIn("TransferWindow(profile, None)", source)
-        self.assertIn("QSystemTrayIcon(", source)
+        self.assertNotIn("QSystemTrayIcon(", source)
         self.assertIn("self.monitor_timer.timeout.connect(self.poll_transfers)", source)
 
 

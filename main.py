@@ -13,7 +13,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
-    QPushButton, QProgressBar, QSystemTrayIcon, QMenu, QVBoxLayout, QWidget,
+    QPushButton, QProgressBar, QVBoxLayout, QWidget,
     QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView,
 )
 
@@ -30,7 +30,7 @@ from mounts import MountManager
 from profiles import Profile, ProfileStore, app_data_dir, config_path
 from version import APP_VERSION
 from transfer_monitor import read_user_snapshot, read_service_snapshot, TransferSnapshot
-from tray_startup import get_tray_autostart, set_tray_autostart
+from legacy_startup import remove_legacy_tray_autostart
 
 
 def app_icon() -> QIcon:
@@ -307,57 +307,7 @@ class MainWindow(QMainWindow):
         self.monitor_timer = QTimer(self)
         self.monitor_timer.timeout.connect(self.poll_transfers)
         self.monitor_timer.start(1500)
-        self.quitting = False
-        self.tray_notice_shown = False
-        self.tray: QSystemTrayIcon | None = None
-        if QSystemTrayIcon.isSystemTrayAvailable():
-            self.tray = QSystemTrayIcon(app_icon(), self)
-            self.tray.setToolTip("S3Drive — монитор загрузки на S3")
-            menu = QMenu(self)
-            open_action = menu.addAction("Открыть S3Drive")
-            open_action.triggered.connect(self.restore_window)
-            self.autostart_action = menu.addAction("Запускать монитор вместе с Windows")
-            self.autostart_action.setCheckable(True)
-            try:
-                self.autostart_action.setChecked(get_tray_autostart())
-            except OSError:
-                self.autostart_action.setChecked(False)
-            self.autostart_action.toggled.connect(self.toggle_autostart)
-            menu.addSeparator()
-            exit_action = menu.addAction("Выход из S3Drive")
-            exit_action.triggered.connect(self.exit_from_tray)
-            self.tray.setContextMenu(menu)
-            self.tray.activated.connect(self.on_tray_activated)
-            self.tray.show()
-            QApplication.instance().setQuitOnLastWindowClosed(False)
         self.statusBar().showMessage(f"Конфигурация: {config_path()} | Кэш и журналы: {app_data_dir()}")
-
-    def restore_window(self):
-        self.showNormal()
-        self.raise_()
-        self.activateWindow()
-
-    def on_tray_activated(self, reason):
-        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
-            self.restore_window()
-
-    def toggle_autostart(self, checked: bool):
-        try:
-            set_tray_autostart(checked)
-        except OSError as exc:
-            self.autostart_action.blockSignals(True)
-            self.autostart_action.setChecked(not checked)
-            self.autostart_action.blockSignals(False)
-            QMessageBox.warning(self, "Автозапуск S3Drive", str(exc))
-
-    def exit_from_tray(self):
-        self.quitting = True
-        if self.close():
-            if self.tray is not None:
-                self.tray.hide()
-            QApplication.quit()
-        else:
-            self.quitting = False
 
     def selected_id(self) -> str | None:
         item = self.items.currentItem()
@@ -800,21 +750,6 @@ class MainWindow(QMainWindow):
         self.status.setText(f"{profile.drive}: {text}")
 
     def closeEvent(self, event):
-        # Keep a GUI monitor in the interactive session even when only the
-        # LocalSystem Windows service is mounting disks. Services in Session 0
-        # cannot display user-facing windows.
-        if self.tray is not None and self.tray.isVisible() and not self.quitting:
-            event.ignore()
-            self.hide()
-            if not self.tray_notice_shown:
-                self.tray.showMessage(
-                    "S3Drive работает в фоне",
-                    "Монитор загрузки на S3 продолжает работать. Открыть программу "
-                    "можно через значок в системном трее.",
-                    QSystemTrayIcon.MessageIcon.Information, 5000,
-                )
-                self.tray_notice_shown = True
-            return
         running = [
             self.mounts.sessions[p.id] for p in self.profiles
             if self.mounts.is_mounted(p.id)
@@ -839,6 +774,11 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "Не удалось отключить диск", str(exc))
                     event.ignore()
                     return
+        # Закрытие основного окна завершает только GUI. Служба Windows
+        # остаётся работать независимо; собственное окно загрузки закрываем,
+        # чтобы в сеансе не оставался отдельный процесс мониторинга.
+        self.monitor_timer.stop()
+        self.hide_transfer_popup()
         super().closeEvent(event)
 
 
@@ -897,20 +837,28 @@ def main() -> int:
     with SingleInstance() as instance:
         app = QApplication(sys.argv)
         if not instance.acquired:
-            if "--tray" not in sys.argv:
-                QMessageBox.information(
-                    None, "S3Drive уже запущен",
-                    "S3Drive уже запущен в системном трее.\n"
-                    "Откройте существующее окно через значок S3Drive возле часов.",
-                )
+            QMessageBox.information(
+                None, "S3Drive уже запущен",
+                "S3Drive уже запущен. Закройте существующее окно программы, "
+                "прежде чем запускать другую копию.",
+            )
+            return 0
+        # Миграция: ранее S3Drive мог включить скрытый запуск из HKCU Run.
+        # Удаляем только нашу прежнюю запись, ничего не добавляя в автозапуск.
+        try:
+            remove_legacy_tray_autostart()
+        except OSError:
+            pass
+        # Старые HKCU записи вызывают S3Drive.exe --tray. Не показываем из-за
+        # них неожиданное окно при входе в Windows.
+        if "--tray" in sys.argv:
             return 0
         if not startup_ready():
             return 1
         app.setApplicationName("S3Drive")
         app.setWindowIcon(app_icon())
         window = MainWindow()
-        if "--tray" not in sys.argv or window.tray is None:
-            window.show()
+        window.show()
         return app.exec()
 
 

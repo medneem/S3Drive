@@ -164,6 +164,8 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
         str(rclone), "mount", "s3drive_mount:" + profile.bucket,
         profile.drive, "--config", str(config), "--vfs-cache-mode", "writes",
         "--cache-dir", str(cache), "--log-file", str(log), "--log-level", "INFO",
+        # JSONL содержит machine-readable core/stats. Без доступа к RC-паролю.
+        "--use-json-log", "--stats", "2s", "--stats-log-level", "INFO",
         # rclone v1.75.2 SetVolumeName uses len(vol) > 32, i.e. UTF-8 BYTES,
         # and slices the name before WinFsp receives it. Passing the
         # native FUSE option bypasses that lossy rclone function.
@@ -213,6 +215,43 @@ def protect_directory(path: Path) -> None:
 
 def protect_file(path: Path) -> None:
     _protect_acl(path, directory=False)
+
+
+def protect_monitor_log(path: Path) -> None:
+    """Журнал доступен на чтение только интерактивным пользователям Windows.
+
+    Файлы конфигурации S3, бинарник и пароль RC по-прежнему недоступны без
+    полномочий SYSTEM/Administrators. Журнал может содержать имена объектов.
+    """
+    import win32con
+    import win32file
+    import win32security
+
+    if path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
+        raise RuntimeError("Нельзя использовать ссылку вместо журнала службы.")
+    path.touch(exist_ok=True)
+    system_sid = win32security.CreateWellKnownSid(win32security.WinLocalSystemSid, None)
+    admin_sid = win32security.CreateWellKnownSid(
+        win32security.WinBuiltinAdministratorsSid, None
+    )
+    interactive_sid = win32security.CreateWellKnownSid(
+        win32security.WinInteractiveSid, None
+    )
+    acl = win32security.ACL()
+    for sid in (system_sid, admin_sid):
+        acl.AddAccessAllowedAceEx(
+            win32security.ACL_REVISION, 0, win32file.FILE_ALL_ACCESS, sid
+        )
+    acl.AddAccessAllowedAceEx(
+        win32security.ACL_REVISION, 0, win32con.GENERIC_READ, interactive_sid
+    )
+    win32security.SetNamedSecurityInfo(
+        str(path), win32security.SE_FILE_OBJECT,
+        (win32security.OWNER_SECURITY_INFORMATION
+         | win32security.DACL_SECURITY_INFORMATION
+         | win32security.PROTECTED_DACL_SECURITY_INFORMATION),
+        admin_sid, None, acl, None,
+    )
 
 
 def check_drive_free(drive: str) -> None:
@@ -305,6 +344,7 @@ def install_and_start(profile, source_rclone: Path) -> None:
     cache = dest / "cache"
     cache.mkdir(exist_ok=True)
     log = dest / "rclone.log"
+    protect_monitor_log(log)
     cmd = service_command(profile, binary, config, cache, log, htpasswd, int(control["port"]))
     name = service_name(profile.id)
     install_explorer_label(profile)

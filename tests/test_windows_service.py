@@ -45,6 +45,38 @@ class ServiceTests(unittest.TestCase):
         self.assertNotIn(p.secret_key, cmd)
         self.assertNotIn(p.access_key, cmd)
 
+    def test_service_writes_machine_readable_stats_with_http_auth_kept(self):
+        p = sample()
+        cmd = service_command(
+            p, Path("C:/rclone.exe"), Path("C:/rclone.conf"),
+            Path("C:/cache"), Path("C:/rclone.log"), Path("C:/rc.htpasswd"),
+            45999,
+        )
+        self.assertIn("--use-json-log", cmd)
+        self.assertIn("--stats 2s", cmd)
+        self.assertIn("--rc-htpasswd", cmd)
+        self.assertNotIn("--rc-no-auth", cmd)
+        self.assertNotIn(p.secret_key, cmd)
+
+    def test_monitor_log_is_read_only_for_interactive_users(self):
+        import os
+        if os.name != "nt":
+            self.skipTest("Тест ACL доступен только в Windows.")
+        import win32con
+        import win32file
+        import win32security
+        from windows_service import protect_monitor_log
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "rclone.log"
+            with patch("win32security.SetNamedSecurityInfo") as setter:
+                protect_monitor_log(path)
+            self.assertTrue(path.exists())
+            acl = setter.call_args.args[5]
+            self.assertEqual(acl.GetAceCount(), 3)
+            self.assertEqual(acl.GetAce(0)[1], win32file.FILE_ALL_ACCESS)
+            self.assertEqual(acl.GetAce(1)[1], win32file.FILE_ALL_ACCESS)
+            self.assertEqual(acl.GetAce(2)[1], win32con.GENERIC_READ)
+
     def test_volume_label_uses_exact_profile_name_in_service(self):
         profile = sample()
         profile.name = "Личный сетевой диск"

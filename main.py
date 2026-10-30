@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt, QTimer, QObject, QRunnable, QThreadPool, Signal
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout,
+    QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
     QPushButton, QProgressBar, QVBoxLayout, QWidget,
 )
@@ -67,6 +67,50 @@ class _MonitorTask(QRunnable):
             self.signals.finished.emit(self.profile.id, state, "")
         except Exception as exc:
             self.signals.finished.emit(self.profile.id, None, str(exc))
+
+
+class TransferWindow(QDialog):
+    """Отдельное немодальное окно. Открывается только при новой передаче."""
+
+    dismissed = Signal(str)
+
+    def __init__(self, profile: Profile, parent: QWidget):
+        super().__init__(parent)
+        self.profile_id = profile.id
+        self.setWindowTitle(f"Загрузка в S3 — {profile.name} ({profile.drive})")
+        self.setWindowFlag(Qt.WindowType.Tool, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setMinimumWidth(390)
+        layout = QVBoxLayout(self)
+        self.filename = QLabel("Идёт загрузка в S3…")
+        self.filename.setWordWrap(True)
+        layout.addWidget(self.filename)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        layout.addWidget(self.progress)
+        self.details = QLabel()
+        self.details.setWordWrap(True)
+        layout.addWidget(self.details)
+
+    def display(self, snapshot: TransferSnapshot):
+        self.filename.setText(
+            f"Файл: {snapshot.current_file[-120:]}"
+            if snapshot.current_file else "Ожидание загрузки файлов в S3…"
+        )
+        self.progress.setVisible(bool(snapshot.current_file))
+        self.progress.setValue(snapshot.percent)
+        lines = [f"Активных передач: {snapshot.uploading}"]
+        if snapshot.queued:
+            lines.append(f"В очереди: {snapshot.queued}")
+        if snapshot.speed:
+            lines.append(f"Скорость: {snapshot.speed / 1048576:.2f} МиБ/с")
+        if snapshot.errors:
+            lines.append(f"Ошибки: {snapshot.errors}")
+        self.details.setText("  |  ".join(lines))
+
+    def closeEvent(self, event):
+        self.dismissed.emit(self.profile_id)
+        super().closeEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -170,19 +214,6 @@ class MainWindow(QMainWindow):
         self.status = QLabel("Выберите профиль или создайте новый.")
         self.status.setWordWrap(True)
         right.addWidget(self.status)
-        transfer_group = QGroupBox("Загрузка в S3")
-        transfer_layout = QVBoxLayout(transfer_group)
-        self.transfer_label = QLabel("Выберите подключённый диск.")
-        self.transfer_label.setWordWrap(True)
-        transfer_layout.addWidget(self.transfer_label)
-        self.transfer_progress = QProgressBar()
-        self.transfer_progress.setRange(0, 100)
-        self.transfer_progress.setVisible(False)
-        transfer_layout.addWidget(self.transfer_progress)
-        self.transfer_details = QLabel("Очередь: — | Передаются: — | Ошибки: —")
-        self.transfer_details.setWordWrap(True)
-        transfer_layout.addWidget(self.transfer_details)
-        right.addWidget(transfer_group)
         columns.addLayout(right, 4)
         layout.addLayout(columns, 1)
 
@@ -230,9 +261,14 @@ class MainWindow(QMainWindow):
         self.timer.start(1500)
         self.monitor_pending = False
         self.uploads_seen: set[str] = set()
+        self.dismissed_uploads: set[str] = set()
+        self.transfer_popup: TransferWindow | None = None
+        self.transfer_popup_profile: str | None = None
+        self.idle_polls = 0
+        self.monitor_last_error = ""
         self.monitor_timer = QTimer(self)
         self.monitor_timer.timeout.connect(self.poll_transfers)
-        self.monitor_timer.start(3000)
+        self.monitor_timer.start(1500)
         self.statusBar().showMessage(f"Конфигурация: {config_path()} | Кэш и журналы: {app_data_dir()}")
 
     def selected_id(self) -> str | None:
@@ -543,6 +579,7 @@ class MainWindow(QMainWindow):
                 self.mounts.clear_cache(profile.id)
             self.pending_mounts.pop(profile.id, None)
             self.uploads_seen.discard(profile.id)
+            self.hide_transfer_popup()
             QMessageBox.information(
                 self, "Кэш очищен",
                 f"Локальный кэш {profile.name} очищен. Диск отключён. "
@@ -552,21 +589,40 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Кэш не очищен", str(exc))
         self.update_status()
 
+    def hide_transfer_popup(self):
+        if self.transfer_popup is not None:
+            self.transfer_popup.dismissed.disconnect(self.dismiss_current_transfer)
+            self.transfer_popup.close()
+            self.transfer_popup.deleteLater()
+            self.transfer_popup = None
+            self.transfer_popup_profile = None
+        self.idle_polls = 0
+
+    def dismiss_current_transfer(self, profile_id: str):
+        # closeEvent is already executing; closing the same dialog recursively
+        # could cause a repeated Qt callback or a flashing window.
+        self.dismissed_uploads.add(profile_id)
+        if self.transfer_popup is not None:
+            self.transfer_popup.deleteLater()
+        self.transfer_popup = None
+        self.transfer_popup_profile = None
+        self.idle_polls = 0
+
     def poll_transfers(self):
         if self.monitor_pending:
             return
         profile = self.selected_profile()
         if profile is None:
-            self.transfer_label.setText("Выберите подключённый диск.")
-            self.transfer_details.setText("Очередь: — | Передаются: — | Ошибки: —")
-            self.transfer_progress.setVisible(False)
+            self.hide_transfer_popup()
             return
+        if self.transfer_popup_profile != profile.id and self.transfer_popup is not None:
+            self.hide_transfer_popup()
         active = (service_status(profile.id) == SERVICE_RUNNING
                   if profile.service_mode else self.mounts.is_mounted(profile.id))
         if not active:
-            self.transfer_label.setText("Диск не подключён.")
-            self.transfer_details.setText("Очередь: — | Передаются: — | Ошибки: —")
-            self.transfer_progress.setVisible(False)
+            self.hide_transfer_popup()
+            self.uploads_seen.discard(profile.id)
+            self.dismissed_uploads.discard(profile.id)
             return
         self.monitor_pending = True
         task = _MonitorTask(profile, self.mounts)
@@ -579,36 +635,40 @@ class MainWindow(QMainWindow):
         if self.selected_id() != profile_id:
             return
         if snapshot is None:
-            self.transfer_label.setText(
-                "Статистика rclone недоступна. Проверьте работу службы и RC."
-            )
-            self.transfer_details.setText("Нет данных: " + error[:180])
-            self.transfer_progress.setVisible(False)
+            if error != self.monitor_last_error:
+                self.monitor_last_error = error
+                self.statusBar().showMessage("Монитор загрузок: " + error[:170], 12000)
+            # Недостоверная статистика не должна скрывать уже открытую передачу.
             return
-        self.transfer_details.setText(
-            f"Очередь: {snapshot.queued} | Передаются: {snapshot.uploading} | "
-            f"Ошибки: {snapshot.errors} | Кэш: {snapshot.cache_bytes / 1048576:.1f} МиБ"
-        )
-        in_flight = bool(snapshot.queued or snapshot.uploading)
-        if in_flight:
+        self.monitor_last_error = ""
+        transferring = bool(snapshot.queued or snapshot.uploading)
+        if transferring:
+            self.idle_polls = 0
             self.uploads_seen.add(profile_id)
-            self.transfer_label.setText(
-                ("Передаётся: " + snapshot.current_file[-90:]
-                 if snapshot.current_file else "Идёт фоновая передача в S3…")
-                + (f" ({snapshot.speed / 1048576:.1f} МиБ/с)" if snapshot.speed else "")
-            )
-            self.transfer_progress.setVisible(bool(snapshot.current_file))
-            self.transfer_progress.setValue(snapshot.percent)
+            if profile_id in self.dismissed_uploads:
+                return
+            if self.transfer_popup is None:
+                profile = self.selected_profile()
+                if profile is None:
+                    return
+                self.transfer_popup = TransferWindow(profile, self)
+                self.transfer_popup_profile = profile_id
+                self.transfer_popup.dismissed.connect(self.dismiss_current_transfer)
+                self.transfer_popup.show()
+            self.transfer_popup.display(snapshot)
         else:
-            self.transfer_progress.setVisible(False)
+            self.idle_polls += 1
+            if self.idle_polls < 2:
+                return
+            self.hide_transfer_popup()
+            self.dismissed_uploads.discard(profile_id)
             if snapshot.errors:
-                self.transfer_label.setText("Есть ошибки загрузки. Проверьте журнал rclone.")
+                self.statusBar().showMessage(
+                    "S3Drive: обнаружены ошибки передачи. Проверьте журнал rclone.", 15000
+                )
             elif profile_id in self.uploads_seen:
                 self.uploads_seen.discard(profile_id)
-                self.transfer_label.setText("Все отслеженные файлы загружены в S3.")
                 self.statusBar().showMessage("S3Drive: загрузка файлов завершена", 8000)
-            else:
-                self.transfer_label.setText("Очередь загрузки пуста.")
 
     def update_status(self):
         profile = self.selected_profile()

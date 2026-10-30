@@ -1,11 +1,15 @@
-"""Read-only VFS upload telemetry for both interactive and Windows service mounts."""
+"""Статистика загрузок rclone для отдельного окна прогресса.
+
+Пользовательское монтирование использует авторизованный RC. Служба LocalSystem
+публикует статистику только через JSON-журнал с доступом на чтение; RC-пароль,
+способный выполнять произвольные команды от SYSTEM, GUI не получает.
+"""
 from __future__ import annotations
 
 import json
-import re
-import subprocess
 from dataclasses import dataclass
-from urllib.request import Request, urlopen
+from datetime import datetime, timezone
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -20,13 +24,13 @@ class TransferSnapshot:
 
 
 def parse_snapshot(vfs: dict, queue: dict, core: dict) -> TransferSnapshot:
+    """Точное состояние VFS для пользовательского монтирования."""
     disk = vfs["diskCache"]
     items = queue.get("queue", [])
     if not isinstance(items, list):
         raise ValueError("Некорректный ответ очереди rclone.")
     active = core.get("transferring") or []
     transfer = active[0] if active else {}
-    # core/stats may be empty for mounts; queue still exposes the active file.
     if not transfer:
         transfer = next((item for item in items if item.get("uploading")), {})
     return TransferSnapshot(
@@ -40,50 +44,71 @@ def parse_snapshot(vfs: dict, queue: dict, core: dict) -> TransferSnapshot:
     )
 
 
-def service_rc_port(configured_command: str) -> int:
-    """Read only the loopback port from SCM's public executable command line."""
-    match = re.search(r'--rc-addr(?:=|\s+)"?127\.0\.0\.1:(\d{1,5})(?="|\s|$)',
-                      configured_command)
-    if not match:
-        raise RuntimeError("Не найден локальный порт мониторинга службы.")
-    port = int(match.group(1))
-    if not 1 <= port <= 65535:
-        raise ValueError("Некорректный порт мониторинга.")
-    return port
-
-
-def read_service_rc_port(service: str) -> int:
-    result = subprocess.run(
-        ["sc.exe", "qc", service], capture_output=True, text=True,
-        timeout=4, check=False,
-        # A windowed PyInstaller app must not flash a console on every poll.
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+def parse_service_stats(stats: dict) -> TransferSnapshot:
+    """Отдельный поток telemetry: агрегаты core/stats, без доступа к RC."""
+    active = stats.get("transferring") or []
+    if not isinstance(active, list):
+        raise ValueError("Некорректная статистика передач.")
+    transfer = active[0] if active else {}
+    return TransferSnapshot(
+        queued=0,  # Очередь VFS не содержится в периодических core/stats.
+        uploading=len(active),
+        errors=max(0, int(stats.get("errors") or 0)),
+        cache_bytes=0,  # Объём кэша недоступен через журнал core/stats.
+        current_file=str(transfer.get("name") or ""),
+        percent=max(0, min(100, int(transfer.get("percentage") or 0))),
+        speed=max(0.0, float(transfer.get("speedAvg") or transfer.get("speed") or 0)),
     )
-    if result.returncode != 0:
-        raise RuntimeError("Не удалось прочитать конфигурацию службы.")
-    return service_rc_port(result.stdout)
 
 
-def _public_rc(port: int, method: str) -> dict:
-    """Only rclone NoAuth telemetry endpoints; never use --rc-no-auth."""
-    if method not in ("vfs/stats", "vfs/queue", "core/stats"):
-        raise ValueError("Запрещён метод управления rclone.")
-    request = Request(
-        f"http://127.0.0.1:{port}/{method}",
-        data=b"{}", method="POST", headers={"Content-Type": "application/json"},
+def latest_service_stats(path: Path, *, now: datetime | None = None) -> TransferSnapshot:
+    """Чтение только свежей завершённой записи JSONL, без чужих секретов.
+
+    При несовместимом старом логе не показываем устаревшее состояние загрузок.
+    """
+    path = Path(path)
+    if path.is_symlink():
+        raise RuntimeError("Недопустимая ссылка на журнал службы.")
+    if not path.is_file():
+        raise RuntimeError(
+            "Монитор службы ещё не настроен. Остановите службу и снова подключите диск."
+        )
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, 2)
+            length = stream.tell()
+            stream.seek(max(0, length - 262144))
+            raw = stream.read(262144)
+    except PermissionError as exc:
+        raise RuntimeError(
+            "Нет доступа к статистике службы. Остановите службу и снова подключите диск."
+        ) from exc
+    if length > 262144:
+        raw = raw.partition(b"\n")[2]
+    now = now or datetime.now(timezone.utc)
+    for line in reversed(raw.splitlines()):
+        try:
+            record = json.loads(line)
+            if not isinstance(record, dict) or not isinstance(record.get("stats"), dict):
+                continue
+            timestamp = datetime.fromisoformat(str(record["time"]).replace("Z", "+00:00"))
+            if timestamp.tzinfo is None:
+                continue
+            elapsed = (now - timestamp).total_seconds()
+            if elapsed < -5 or elapsed > 15:
+                raise RuntimeError("Статистика службы устарела; новых передач не обнаружено.")
+            return parse_service_stats(record["stats"])
+        except (ValueError, TypeError, KeyError, UnicodeDecodeError):
+            continue
+    raise RuntimeError(
+        "Нет свежей статистики службы. Для включения мониторинга остановите "
+        "службу и снова подключите диск через новую версию S3Drive."
     )
-    with urlopen(request, timeout=1.5) as response:
-        return json.loads(response.read(1024 * 1024).decode("utf-8"))
 
 
 def read_service_snapshot(profile_id: str) -> TransferSnapshot:
-    from windows_service import service_name
-    port = read_service_rc_port(service_name(profile_id))
-    return parse_snapshot(
-        _public_rc(port, "vfs/stats"),
-        _public_rc(port, "vfs/queue"),
-        _public_rc(port, "core/stats"),
-    )
+    from windows_service import service_dir
+    return latest_service_stats(service_dir(profile_id) / "rclone.log")
 
 
 def read_user_snapshot(manager, profile_id: str) -> TransferSnapshot:

@@ -5,7 +5,11 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from cache_ops import ensure_cache_idle, erase_cache_directory
-from transfer_monitor import parse_snapshot, read_service_rc_port, service_rc_port, _public_rc
+from datetime import datetime, timedelta, timezone
+import json
+
+from transfer_monitor import (parse_snapshot, parse_service_stats, latest_service_stats,
+                              read_service_snapshot)
 
 
 def clean_stats():
@@ -86,35 +90,66 @@ class TransferMonitorTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             parse_snapshot({}, {}, {})
 
-    def test_scm_port_parser_accepts_loopback_only(self):
-        self.assertEqual(service_rc_port(
-            r'C:\\bin\\rclone.exe --rc-addr 127.0.0.1:45833 --rc-htpasswd a'
-        ), 45833)
-        with self.assertRaises(RuntimeError):
-            service_rc_port("--rc-addr 0.0.0.0:45833")
-        with self.assertRaises(ValueError):
-            service_rc_port("--rc-addr 127.0.0.1:99999")
+    def test_core_stats_from_service_log_show_active_upload(self):
+        state = parse_service_stats({
+            "transferring": [{"name": "backup.zip", "percentage": 68, "speedAvg": 1048576}],
+            "errors": 0,
+        })
+        self.assertEqual(state.uploading, 1)
+        self.assertEqual(state.current_file, "backup.zip")
+        self.assertEqual(state.percent, 68)
+        self.assertEqual(state.speed, 1048576)
+        self.assertEqual(state.queued, 0)
 
-    def test_service_status_poll_never_flashes_a_console_on_windows(self):
-        # In the packaged GUI subprocess has CREATE_NO_WINDOW, but no console.
-        result = Mock(returncode=0, stdout=(
-            "BINARY_PATH_NAME : C:\\rclone.exe mount s3drive_mount: "
-            "S: --rc-addr 127.0.0.1:45833 --rc-htpasswd auth"
-        ))
-        with patch("transfer_monitor.subprocess.CREATE_NO_WINDOW",
-                   0x08000000, create=True):
-            with patch("transfer_monitor.subprocess.run", return_value=result) as run:
-                port = read_service_rc_port("S3Drive-test")
-        self.assertEqual(port, 45833)
-        run.assert_called_once_with(
-            ["sc.exe", "qc", "S3Drive-test"],
-            capture_output=True, text=True, timeout=4, check=False,
-            creationflags=0x08000000,
-        )
+    def test_recent_service_json_stats_read_without_rc_credentials(self):
+        now = datetime.now(timezone.utc)
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / "rclone.log"
+            records = [
+                {"time": (now - timedelta(seconds=4)).isoformat(),
+                 "stats": {"transferring": [{"name": "old.bin"}]}},
+                {"time": now.isoformat(), "stats": {
+                    "transferring": [{"name": "new.bin", "percentage": 70}],
+                    "errors": 0,
+                }},
+            ]
+            log.write_text(
+                "старый текстовый лог\n" +
+                "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in records),
+                encoding="utf-8",
+            )
+            self.assertEqual(latest_service_stats(log, now=now).current_file, "new.bin")
+            with patch("windows_service.service_dir", return_value=Path(td)):
+                with patch("transfer_monitor.read_user_snapshot", side_effect=AssertionError):
+                    self.assertEqual(read_service_snapshot("profile").uploading, 1)
 
-    def test_public_rc_refuses_privileged_methods(self):
-        with self.assertRaises(ValueError):
-            _public_rc(1234, "core/quit")
+    def test_old_log_and_stale_stats_do_not_report_an_upload(self):
+        now = datetime.now(timezone.utc)
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / "rclone.log"
+            log.write_text("2026/10/30 INFO : old plain-text log\n", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "нет свежей статистики|Нет свежей статистики"):
+                latest_service_stats(log, now=now)
+            record = {
+                "time": (now - timedelta(minutes=1)).isoformat(),
+                "stats": {"transferring": [{"name": "stale.zip"}]},
+            }
+            log.write_text(json.dumps(record) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "устарела"):
+                latest_service_stats(log, now=now)
+
+    def test_cannot_follow_service_log_symlink(self):
+        with tempfile.TemporaryDirectory() as td:
+            actual = Path(td) / "original"
+            actual.write_text("contents", encoding="utf-8")
+            symlink = Path(td) / "link"
+            try:
+                symlink.symlink_to(actual)
+            except (OSError, NotImplementedError):
+                self.skipTest("Symlink creation is not supported on this runner.")
+            with self.assertRaisesRegex(RuntimeError, "ссылку"):
+                latest_service_stats(symlink)
+
 
 
 if __name__ == "__main__":

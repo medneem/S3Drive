@@ -49,6 +49,10 @@ class NewProfileDefaultsTests(unittest.TestCase):
         self.assertIn('QPushButton("Очистить кэш")', source)
         self.assertIn('self.clear_cache_button.clicked.connect(self.clear_cache_profile)', source)
         self.assertIn('self.monitor_timer.timeout.connect(self.poll_transfers)', source)
+        self.assertIn("class TransferWindow(QDialog)", inspect.getsource(__import__("main")))
+        self.assertIn("self.transfer_popup.show()", source)
+        self.assertNotIn('QGroupBox("Загрузка в S3")', source)
+        self.assertNotIn('self.transfer_label = QLabel', source)
 
 
 if __name__ == "__main__":

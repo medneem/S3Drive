@@ -123,7 +123,7 @@ class TransferDialogTests(unittest.TestCase):
         from main import MainWindow
         from profiles import new_profile
 
-        profile = new_profile(name="QNAP", endpoint="http://nas:8010", bucket="b",
+        profile = new_profile(name="QNAP", endpoint="http://nas:8010", bucket="backup",
                               access_key="test", secret_key="test")
         state = parse_snapshot(vfs(), {"queue": []}, {
             "transferring": [{"name": "movie.mkv", "bytes": 100, "size": 200}],

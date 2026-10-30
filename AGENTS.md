@@ -21,5 +21,8 @@
 5. Publication uses GitHub Actions → **Build Windows** → **Run workflow**, select branch `main`, enter `release_version` without a `v` prefix (for example `1.0.0`). A successful manual run builds the versioned archive and creates the `vMAJOR.MINOR.PATCH` Git tag and GitHub Release. Never reuse an existing release tag.
 6. Ordinary CI artifacts get a `-dev.<github.run_number>` suffix and are not GitHub Releases.
 7. If the agent cannot trigger the manual workflow through its connected tools, explain the exact UI steps; never claim that a release has been published before confirming it.
+8. **Сообщения всех новых коммитов писать на русском языке** — и заголовок, и содержательную часть. Стандартные префиксы Conventional Commits (feat:, fix:, docs:, test:, ci:, chore:) допустимы, но описание после префикса должно быть по-русски. Писать конкретно, что изменилось и зачем.
+9. **Описание каждого GitHub Release формировать из фактических изменений в коммитах с предыдущего релизного SemVer-тега до текущего коммита main**, а не из одинакового шаблона. Текст должен содержать разделы на русском языке (новые возможности, исправления и технические изменения), охватывать только ещё не опубликованные изменения и не приписывать проекту несуществующих возможностей.
+10. Перед публикацией по возможности сверять описание с изменениями в diff. GitHub Actions автоматически собирает Markdown release notes из названий коммитов диапазона; агент должен использовать информативные русскоязычные сообщения в новых коммитах. Исторические англоязычные коммиты не переписывать.
 
 These rules also apply when suggesting releases during future work on this repository.

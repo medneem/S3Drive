@@ -138,6 +138,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v8
         with:
           name: S3Drive-windows-x64-${{ github.run_id }}
@@ -161,8 +165,10 @@ jobs:
             echo "::error::Git tag $tag already exists — refusing to reuse it"
             exit 1
           fi
+          notes="release/RELEASE_NOTES.md"
+          python scripts/release_notes.py --version "$RELEASE_VERSION" --output "$notes"
           gh release create "$tag" "$zip" \
             --target "$GITHUB_SHA" \
             --title "S3Drive $tag" \
-            --notes "Windows x64 release. rclone.exe and the WinFsp installer are included. Do not use S3 mounts for databases or actively edited multi-user files." \
+            --notes-file "$notes" \
             --latest

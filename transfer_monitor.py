@@ -46,6 +46,14 @@ class TransferSnapshot:
         return bool(self.queued or self.uploading or self.downloading or self.unknown
                     or self.transfers)
 
+    @property
+    def has_upload_activity(self) -> bool:
+        """Подтверждённая VFS-отправка или её очередь, но не чтение с S3."""
+        return bool(self.queued or self.uploading or any(
+            transfer.direction in ("upload", "queued")
+            for transfer in self.transfers
+        ))
+
 
 def _name(value) -> str:
     return str(value or "").replace("\\", "/").removeprefix("./").strip("/").casefold()

@@ -34,6 +34,7 @@ class BidirectionalStatsTests(unittest.TestCase):
         self.assertEqual(state.transfers[1].bytes_done, 200)
         self.assertEqual(state.transfers[1].size, 800)
         self.assertEqual(state.transfers[1].eta, 10)
+        self.assertTrue(state.has_upload_activity)
         self.assertEqual(state.transfers[0].percent, 50)
 
     def test_queued_file_is_not_misidentified_as_download(self):
@@ -42,6 +43,7 @@ class BidirectionalStatsTests(unittest.TestCase):
         self.assertEqual([(t.name, t.direction) for t in state.transfers],
                          [("queued.txt", "queued")])
         self.assertEqual(state.downloading, 0)
+        self.assertTrue(state.has_upload_activity)
 
     def test_unknown_upload_with_mismatched_names_not_labeled_download(self):
         queue = {"queue": [{"name": "some/prefix", "uploading": True}]}
@@ -56,6 +58,7 @@ class BidirectionalStatsTests(unittest.TestCase):
         self.assertEqual(state.uploading, 0)
         self.assertEqual(state.downloading, 1)
         self.assertEqual(state.transfers[0].direction, "download")
+        self.assertFalse(state.has_upload_activity)
 
     def test_service_log_classifies_upload_events_and_downloads(self):
         now = datetime.now(timezone.utc)
@@ -103,6 +106,7 @@ class BidirectionalStatsTests(unittest.TestCase):
             {"name": "x", "size": 10, "bytes": 1}]}, upload_names=None)
         self.assertEqual(state.transfers[0].direction, "unknown")
         self.assertTrue(state.has_activity)
+        self.assertFalse(state.has_upload_activity)
 
     def test_service_logs_are_not_misread_after_stale_sample(self):
         now = datetime.now(timezone.utc)
@@ -117,7 +121,7 @@ class BidirectionalStatsTests(unittest.TestCase):
 
 
 class TransferDialogTests(unittest.TestCase):
-    def test_download_only_opens_independent_transfer_window(self):
+    def test_download_only_never_opens_s3drive_window(self):
         from types import SimpleNamespace
         from unittest.mock import Mock, patch
         from main import MainWindow
@@ -130,20 +134,63 @@ class TransferDialogTests(unittest.TestCase):
         })
         ui = SimpleNamespace(
             monitor_pending=True, profiles=[profile], monitor_last_error="",
-            idle_polls=0, uploads_seen=set(), dismissed_uploads=set(),
+            idle_polls=1, uploads_seen=set(), dismissed_uploads=set(),
             transfer_popup=None, transfer_popup_profile=None,
-            dismiss_current_transfer=Mock(),
+            hide_transfer_popup=Mock(), statusBar=Mock(),
         )
         with patch("main.TransferWindow") as dialog:
             MainWindow.on_transfers(ui, profile.id, state, "")
-        dialog.assert_called_once_with(profile, None)
-        dialog.return_value.show.assert_called_once_with()
-        dialog.return_value.display.assert_called_once_with(state)
-        self.assertEqual(ui.transfer_popup_profile, profile.id)
-        self.assertEqual(state.downloading, 1)
+        dialog.assert_not_called()
+        ui.hide_transfer_popup.assert_called_once_with()
+        self.assertEqual(ui.uploads_seen, set())
         self.assertFalse(ui.monitor_pending)
 
-    def test_dialog_lists_both_directions_in_separate_rows(self):
+    def test_download_does_not_keep_own_window_open_after_upload_finished(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        from main import MainWindow
+        from profiles import new_profile
+
+        profile = new_profile(name="QNAP", endpoint="http://nas:8010", bucket="backup",
+                              access_key="test", secret_key="test")
+        state = parse_snapshot(vfs(), {"queue": []}, {
+            "transferring": [{"name": "download.bin", "bytes": 20, "size": 50}],
+        })
+        ui = SimpleNamespace(
+            monitor_pending=True, profiles=[profile], monitor_last_error="",
+            idle_polls=1, uploads_seen={profile.id}, dismissed_uploads=set(),
+            transfer_popup=Mock(), transfer_popup_profile=profile.id,
+            hide_transfer_popup=Mock(), statusBar=Mock(),
+        )
+        with patch("main.TransferWindow") as dialog:
+            MainWindow.on_transfers(ui, profile.id, state, "")
+        dialog.assert_not_called()
+        ui.hide_transfer_popup.assert_called_once_with()
+        self.assertNotIn(profile.id, ui.uploads_seen)
+        self.assertIn("загрузка", ui.statusBar.return_value.showMessage.call_args.args[0].lower())
+
+    def test_only_ambiguous_service_transfer_does_not_open_window(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        from main import MainWindow
+        from profiles import new_profile
+
+        profile = new_profile(name="QNAP", endpoint="http://nas:8010", bucket="backup",
+                              access_key="test", secret_key="test")
+        state = parse_service_stats({
+            "transferring": [{"name": "unknown.bin", "bytes": 50, "size": 100}]
+        })
+        ui = SimpleNamespace(
+            monitor_pending=True, profiles=[profile], monitor_last_error="",
+            idle_polls=0, uploads_seen=set(), dismissed_uploads=set(),
+            transfer_popup=None, transfer_popup_profile=None,
+            hide_transfer_popup=Mock(), statusBar=Mock(),
+        )
+        with patch("main.TransferWindow") as dialog:
+            MainWindow.on_transfers(ui, profile.id, state, "")
+        dialog.assert_not_called()
+
+    def test_dialog_shows_upload_only_when_both_directions_are_active(self):
         from types import SimpleNamespace
         from unittest.mock import Mock
         from main import TransferWindow
@@ -157,11 +204,34 @@ class TransferDialogTests(unittest.TestCase):
             summary=Mock(), table=Mock(), overall_progress=Mock(),
         )
         TransferWindow.display(ui, state)
-        ui.table.setRowCount.assert_called_once_with(2)
-        self.assertEqual(ui.table.setItem.call_count, 10)
+        ui.table.setRowCount.assert_called_once_with(1)
+        self.assertEqual(ui.table.setItem.call_count, 5)
         self.assertIn("На S3: 1", ui.summary.setText.call_args.args[0])
-        self.assertIn("С S3: 1", ui.summary.setText.call_args.args[0])
-        ui.overall_progress.setValue.assert_called_once_with(50)
+        self.assertNotIn("С S3:", ui.summary.setText.call_args.args[0])
+        ui.overall_progress.setValue.assert_called_once_with(30)
+
+    def test_vfs_upload_still_triggers_own_window(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        from main import MainWindow
+        from profiles import new_profile
+        profile = new_profile(name="QNAP", endpoint="http://nas:8010", bucket="backup",
+                              access_key="test", secret_key="test")
+        state = parse_snapshot(vfs(1, 1), {
+            "queue": [{"name": "up.zip", "uploading": True}],
+        }, {"transferring": [{"name": "up.zip", "size": 1000, "bytes": 300}]})
+        ui = SimpleNamespace(
+            monitor_pending=True, profiles=[profile], monitor_last_error="",
+            idle_polls=0, uploads_seen=set(), dismissed_uploads=set(),
+            transfer_popup=None, transfer_popup_profile=None,
+            dismiss_current_transfer=Mock(),
+        )
+        with patch("main.TransferWindow") as dialog:
+            MainWindow.on_transfers(ui, profile.id, state, "")
+        dialog.assert_called_once_with(profile, None)
+        dialog.return_value.show.assert_called_once_with()
+        dialog.return_value.display.assert_called_once_with(state)
+
 
 
 if __name__ == "__main__":

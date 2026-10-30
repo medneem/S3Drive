@@ -72,20 +72,20 @@ class _MonitorTask(QRunnable):
 
 
 class TransferWindow(QDialog):
-    """Одно независимое окно сетевых передач: входящие и исходящие файлы."""
+    """Отдельное окно отложенной отправки файлов на S3."""
 
     dismissed = Signal(str)
 
     def __init__(self, profile: Profile, parent: QWidget | None = None):
         super().__init__(parent)
         self.profile_id = profile.id
-        self.setWindowTitle(f"Передачи S3 — {profile.name} ({profile.drive})")
+        self.setWindowTitle(f"Загрузка на S3 — {profile.name} ({profile.drive})")
         self.setWindowFlag(Qt.WindowType.Tool, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.resize(740, 330)
         self.setMinimumWidth(580)
         layout = QVBoxLayout(self)
-        self.summary = QLabel("Мониторинг сетевых передач…")
+        self.summary = QLabel("Мониторинг отправки на S3…")
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
         self.overall_progress = QProgressBar()
@@ -109,16 +109,15 @@ class TransferWindow(QDialog):
     def display(self, snapshot: TransferSnapshot):
         labels = {
             "upload": "↑ На S3",
-            "download": "↓ С S3",
             "queued": "⌛ В очереди",
-            "unknown": "↔ Направление не определено",
         }
-        items = snapshot.transfers
+        # Windows already displays its own download progress dialog.
+        # Never show incoming downloads or unclassified RC transfers here.
+        items = tuple(item for item in snapshot.transfers
+                      if item.direction in ("upload", "queued"))
         self.summary.setText(
             f"На S3: {snapshot.uploading}   |   "
-            f"С S3: {snapshot.downloading}   |   "
             f"В очереди: {snapshot.queued}"
-            + (f"   |   Не определено: {snapshot.unknown}" if snapshot.unknown else "")
             + (f"   |   Ошибки: {snapshot.errors}" if snapshot.errors else "")
         )
         self.table.setRowCount(len(items))
@@ -313,7 +312,7 @@ class MainWindow(QMainWindow):
         self.tray: QSystemTrayIcon | None = None
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray = QSystemTrayIcon(app_icon(), self)
-            self.tray.setToolTip("S3Drive — монитор передач S3")
+            self.tray.setToolTip("S3Drive — монитор загрузки на S3")
             menu = QMenu(self)
             open_action = menu.addAction("Открыть S3Drive")
             open_action.triggered.connect(self.restore_window)
@@ -738,7 +737,9 @@ class MainWindow(QMainWindow):
             # Недостоверная статистика не должна скрывать уже открытую передачу.
             return
         self.monitor_last_error = ""
-        transferring = snapshot.has_activity
+        # Show our window for confirmed VFS uploads only. Windows Explorer
+        # already owns the UI for downloads from the mounted drive.
+        transferring = snapshot.has_upload_activity
         if transferring:
             self.idle_polls = 0
             self.uploads_seen.add(profile_id)
@@ -762,7 +763,7 @@ class MainWindow(QMainWindow):
                 )
             elif profile_id in self.uploads_seen:
                 self.uploads_seen.discard(profile_id)
-                self.statusBar().showMessage("S3Drive: сетевые передачи завершены", 8000)
+                self.statusBar().showMessage("S3Drive: загрузка файлов на S3 завершена", 8000)
 
     def update_status(self):
         profile = self.selected_profile()
@@ -808,7 +809,7 @@ class MainWindow(QMainWindow):
             if not self.tray_notice_shown:
                 self.tray.showMessage(
                     "S3Drive работает в фоне",
-                    "Монитор передач продолжает работать. Открыть программу "
+                    "Монитор загрузки на S3 продолжает работать. Открыть программу "
                     "можно через значок в системном трее.",
                     QSystemTrayIcon.MessageIcon.Information, 5000,
                 )

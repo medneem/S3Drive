@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
     QPushButton, QProgressBar, QSystemTrayIcon, QMenu, QVBoxLayout, QWidget,
+    QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView,
 )
 
 from dependencies import winfsp_installed, winfsp_installer
@@ -71,43 +72,79 @@ class _MonitorTask(QRunnable):
 
 
 class TransferWindow(QDialog):
-    """Отдельное немодальное окно. Открывается только при новой передаче."""
+    """Одно независимое окно сетевых передач: входящие и исходящие файлы."""
 
     dismissed = Signal(str)
 
     def __init__(self, profile: Profile, parent: QWidget | None = None):
         super().__init__(parent)
         self.profile_id = profile.id
-        self.setWindowTitle(f"Загрузка в S3 — {profile.name} ({profile.drive})")
+        self.setWindowTitle(f"Передачи S3 — {profile.name} ({profile.drive})")
         self.setWindowFlag(Qt.WindowType.Tool, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
-        self.setMinimumWidth(390)
+        self.resize(740, 330)
+        self.setMinimumWidth(580)
         layout = QVBoxLayout(self)
-        self.filename = QLabel("Идёт загрузка в S3…")
-        self.filename.setWordWrap(True)
-        layout.addWidget(self.filename)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 100)
-        layout.addWidget(self.progress)
-        self.details = QLabel()
-        self.details.setWordWrap(True)
-        layout.addWidget(self.details)
+        self.summary = QLabel("Мониторинг сетевых передач…")
+        self.summary.setWordWrap(True)
+        layout.addWidget(self.summary)
+        self.overall_progress = QProgressBar()
+        self.overall_progress.setRange(0, 100)
+        layout.addWidget(self.overall_progress)
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels([
+            "Направление", "Имя файла", "Прогресс", "Скорость", "Осталось",
+        ])
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.verticalHeader().setVisible(False)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnWidth(0, 125)
+        self.table.setColumnWidth(2, 105)
+        self.table.setColumnWidth(3, 110)
+        self.table.setColumnWidth(4, 100)
+        layout.addWidget(self.table)
 
     def display(self, snapshot: TransferSnapshot):
-        self.filename.setText(
-            f"Файл: {snapshot.current_file[-120:]}"
-            if snapshot.current_file else "Ожидание загрузки файлов в S3…"
+        labels = {
+            "upload": "↑ На S3",
+            "download": "↓ С S3",
+            "queued": "⌛ В очереди",
+            "unknown": "↔ Направление не определено",
+        }
+        items = snapshot.transfers
+        self.summary.setText(
+            f"На S3: {snapshot.uploading}   |   "
+            f"С S3: {snapshot.downloading}   |   "
+            f"В очереди: {snapshot.queued}"
+            + (f"   |   Не определено: {snapshot.unknown}" if snapshot.unknown else "")
+            + (f"   |   Ошибки: {snapshot.errors}" if snapshot.errors else "")
         )
-        self.progress.setVisible(bool(snapshot.current_file))
-        self.progress.setValue(snapshot.percent)
-        lines = [f"Активных передач: {snapshot.uploading}"]
-        if snapshot.queued:
-            lines.append(f"В очереди: {snapshot.queued}")
-        if snapshot.speed:
-            lines.append(f"Скорость: {snapshot.speed / 1048576:.2f} МиБ/с")
-        if snapshot.errors:
-            lines.append(f"Ошибки: {snapshot.errors}")
-        self.details.setText("  |  ".join(lines))
+        self.table.setRowCount(len(items))
+        for row, item in enumerate(items):
+            percent = f"{item.percent}%"
+            if item.size:
+                percent += (f" ({item.bytes_done / 1048576:.1f}/"
+                            f"{item.size / 1048576:.1f} МиБ)")
+            values = (
+                labels[item.direction],
+                item.name,
+                percent if item.direction != "queued" else "Ожидает",
+                f"{item.speed / 1048576:.2f} МиБ/с" if item.speed else "—",
+                f"{int(item.eta)} с" if item.eta is not None else "—",
+            )
+            for col, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                cell.setToolTip(value)
+                self.table.setItem(row, col, cell)
+        active = [item for item in items
+                  if item.direction != "queued" and item.size]
+        total = sum(item.size for item in active)
+        done = sum(min(item.bytes_done, item.size) for item in active)
+        self.overall_progress.setVisible(bool(total))
+        if total:
+            self.overall_progress.setValue(round(done * 100 / total))
 
     def closeEvent(self, event):
         self.dismissed.emit(self.profile_id)
@@ -276,7 +313,7 @@ class MainWindow(QMainWindow):
         self.tray: QSystemTrayIcon | None = None
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray = QSystemTrayIcon(app_icon(), self)
-            self.tray.setToolTip("S3Drive — монитор загрузки в S3")
+            self.tray.setToolTip("S3Drive — монитор передач S3")
             menu = QMenu(self)
             open_action = menu.addAction("Открыть S3Drive")
             open_action.triggered.connect(self.restore_window)
@@ -701,7 +738,7 @@ class MainWindow(QMainWindow):
             # Недостоверная статистика не должна скрывать уже открытую передачу.
             return
         self.monitor_last_error = ""
-        transferring = bool(snapshot.queued or snapshot.uploading)
+        transferring = snapshot.has_activity
         if transferring:
             self.idle_polls = 0
             self.uploads_seen.add(profile_id)
@@ -725,7 +762,7 @@ class MainWindow(QMainWindow):
                 )
             elif profile_id in self.uploads_seen:
                 self.uploads_seen.discard(profile_id)
-                self.statusBar().showMessage("S3Drive: загрузка файлов завершена", 8000)
+                self.statusBar().showMessage("S3Drive: сетевые передачи завершены", 8000)
 
     def update_status(self):
         profile = self.selected_profile()
@@ -771,7 +808,7 @@ class MainWindow(QMainWindow):
             if not self.tray_notice_shown:
                 self.tray.showMessage(
                     "S3Drive работает в фоне",
-                    "Монитор загрузок продолжает работать. Открыть программу "
+                    "Монитор передач продолжает работать. Открыть программу "
                     "можно через значок в системном трее.",
                     QSystemTrayIcon.MessageIcon.Information, 5000,
                 )

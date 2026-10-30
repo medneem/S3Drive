@@ -95,7 +95,8 @@ class TransferMonitorTests(unittest.TestCase):
             "transferring": [{"name": "backup.zip", "percentage": 68, "speedAvg": 1048576}],
             "errors": 0,
         })
-        self.assertEqual(state.uploading, 1)
+        self.assertEqual(state.uploading, 0)
+        self.assertEqual(state.unknown, 1)
         self.assertEqual(state.current_file, "backup.zip")
         self.assertEqual(state.percent, 68)
         self.assertEqual(state.speed, 1048576)
@@ -121,7 +122,7 @@ class TransferMonitorTests(unittest.TestCase):
             self.assertEqual(latest_service_stats(log, now=now).current_file, "new.bin")
             with patch("windows_service.service_dir", return_value=Path(td)):
                 with patch("transfer_monitor.read_user_snapshot", side_effect=AssertionError):
-                    self.assertEqual(read_service_snapshot("profile").uploading, 1)
+                    self.assertEqual(read_service_snapshot("profile").downloading, 1)
 
     def test_old_log_and_stale_stats_do_not_report_an_upload(self):
         now = datetime.now(timezone.utc)

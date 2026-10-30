@@ -1,2 +1,2 @@
-"""Development version. CI stamps 0.1.<run number> for each build."""
-APP_VERSION = "0.1.0-dev"
+"""Development version for local runs; CI stamps a dev or release version."""
+APP_VERSION = "1.0.0-dev"

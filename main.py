@@ -428,7 +428,7 @@ class MainWindow(QMainWindow):
                 problems = []
                 if profile.create_shortcut:
                     try:
-                        create_desktop_shortcut(profile.drive)
+                        create_desktop_shortcut(profile.drive, profile.name)
                     except Exception as exc:
                         problems.append(f"Ярлык на рабочем столе не создан: {exc}")
                 if profile.open_after_mount:

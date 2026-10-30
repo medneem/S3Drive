@@ -101,22 +101,22 @@ class DesktopActionTests(unittest.TestCase):
             shell = Mock()
             shell.SpecialFolders.return_value = tmp
             shell.CreateShortcut.return_value = shortcut
-            location, created = create_desktop_shortcut("S:", shell)
-            self.assertEqual(location, Path(tmp) / "S3Drive (S).lnk")
+            location, created = create_desktop_shortcut("S:", "QNAP", shell)
+            self.assertEqual(location, Path(tmp) / "QNAP (S).lnk")
             self.assertTrue(created)
             self.assertEqual(shortcut.TargetPath, "S:\\")
             shortcut.Save.assert_called_once()
 
-    def test_existing_shortcut_is_not_overwritten(self):
+    def test_unrelated_legacy_shortcut_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as tmp:
             existing = Path(tmp) / "S3Drive (S).lnk"
             existing.write_text("existing", encoding="utf-8")
             shell = Mock()
             shell.SpecialFolders.return_value = tmp
-            location, created = create_desktop_shortcut("S:", shell)
-            self.assertEqual(location, existing)
-            self.assertFalse(created)
-            shell.CreateShortcut.assert_not_called()
+            location, created = create_desktop_shortcut("S:", "QNAP", shell)
+            self.assertEqual(location, Path(tmp) / "QNAP (S).lnk")
+            self.assertTrue(created)
+            self.assertEqual(existing.read_text(encoding="utf-8"), "existing")
 
     def test_drive_open_action_uses_mount_path(self):
         launcher = Mock()

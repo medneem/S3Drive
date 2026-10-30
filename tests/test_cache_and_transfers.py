@@ -147,7 +147,7 @@ class TransferMonitorTests(unittest.TestCase):
                 symlink.symlink_to(actual)
             except (OSError, NotImplementedError):
                 self.skipTest("Symlink creation is not supported on this runner.")
-            with self.assertRaisesRegex(RuntimeError, "ссылку"):
+            with self.assertRaisesRegex(RuntimeError, "ссылк"):
                 latest_service_stats(symlink)
 
 

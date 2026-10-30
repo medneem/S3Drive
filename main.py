@@ -7,13 +7,13 @@ import time
 import uuid
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QObject, QRunnable, QThreadPool, Signal
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
-    QPushButton, QVBoxLayout, QWidget,
+    QPushButton, QProgressBar, QVBoxLayout, QWidget,
 )
 
 from dependencies import winfsp_installed, winfsp_installer
@@ -28,6 +28,7 @@ from single_instance import SingleInstance
 from mounts import MountManager
 from profiles import Profile, ProfileStore, app_data_dir, config_path
 from version import APP_VERSION
+from transfer_monitor import read_user_snapshot, read_service_snapshot, TransferSnapshot
 
 
 def app_icon() -> QIcon:
@@ -42,6 +43,30 @@ def app_icon() -> QIcon:
     renderer.render(painter)
     painter.end()
     return QIcon(pixmap)
+
+
+class _MonitorSignals(QObject):
+    finished = Signal(str, object, str)
+
+
+class _MonitorTask(QRunnable):
+    """Polling runs away from the Qt GUI thread (RC calls can take seconds)."""
+
+    def __init__(self, profile: Profile, manager: MountManager):
+        super().__init__()
+        self.profile = profile
+        self.manager = manager
+        self.signals = _MonitorSignals()
+
+    def run(self):
+        try:
+            if self.profile.service_mode:
+                state = read_service_snapshot(self.profile.id)
+            else:
+                state = read_user_snapshot(self.manager, self.profile.id)
+            self.signals.finished.emit(self.profile.id, state, "")
+        except Exception as exc:
+            self.signals.finished.emit(self.profile.id, None, str(exc))
 
 
 class MainWindow(QMainWindow):
@@ -145,6 +170,19 @@ class MainWindow(QMainWindow):
         self.status = QLabel("Выберите профиль или создайте новый.")
         self.status.setWordWrap(True)
         right.addWidget(self.status)
+        transfer_group = QGroupBox("Загрузка в S3")
+        transfer_layout = QVBoxLayout(transfer_group)
+        self.transfer_label = QLabel("Выберите подключённый диск.")
+        self.transfer_label.setWordWrap(True)
+        transfer_layout.addWidget(self.transfer_label)
+        self.transfer_progress = QProgressBar()
+        self.transfer_progress.setRange(0, 100)
+        self.transfer_progress.setVisible(False)
+        transfer_layout.addWidget(self.transfer_progress)
+        self.transfer_details = QLabel("Очередь: — | Передаются: — | Ошибки: —")
+        self.transfer_details.setWordWrap(True)
+        transfer_layout.addWidget(self.transfer_details)
+        right.addWidget(transfer_group)
         columns.addLayout(right, 4)
         layout.addLayout(columns, 1)
 
@@ -155,10 +193,17 @@ class MainWindow(QMainWindow):
         self.mount_button = QPushButton("Подключить")
         self.unmount_button = QPushButton("Отключить")
         self.remove_service_button = QPushButton("Удалить службу")
+        self.clear_cache_button = QPushButton("Очистить кэш")
+        self.clear_cache_button.setToolTip(
+            "После подтверждения проверяет отсутствие незавершённых загрузок, "
+            "отключает диск и очищает его локальный VFS-кэш. "
+            "При незавершённых передачах или ошибках ничего не удаляет."
+        )
         actions.addWidget(self.add_button)
         actions.addWidget(self.save_button)
         actions.addWidget(self.remove_button)
         actions.addStretch()
+        actions.addWidget(self.clear_cache_button)
         actions.addWidget(self.remove_service_button)
         actions.addWidget(self.unmount_button)
         actions.addWidget(self.mount_button)
@@ -170,6 +215,7 @@ class MainWindow(QMainWindow):
         self.mount_button.clicked.connect(self.mount_profile)
         self.unmount_button.clicked.connect(self.unmount_profile)
         self.remove_service_button.clicked.connect(self.remove_service_profile)
+        self.clear_cache_button.clicked.connect(self.clear_cache_profile)
         self.pending_mounts: dict[str, tuple[Profile, float]] = {}
         self.refresh_items()
         self.new_profile()
@@ -182,6 +228,11 @@ class MainWindow(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_status)
         self.timer.start(1500)
+        self.monitor_pending = False
+        self.uploads_seen: set[str] = set()
+        self.monitor_timer = QTimer(self)
+        self.monitor_timer.timeout.connect(self.poll_transfers)
+        self.monitor_timer.start(3000)
         self.statusBar().showMessage(f"Конфигурация: {config_path()} | Кэш и журналы: {app_data_dir()}")
 
     def selected_id(self) -> str | None:
@@ -459,10 +510,111 @@ class MainWindow(QMainWindow):
                 )
         self.update_status()
 
+    def clear_cache_profile(self):
+        profile = self.selected_profile()
+        if profile is None:
+            return
+        svc_state = service_status(profile.id)
+        active = svc_state == SERVICE_RUNNING or self.mounts.is_mounted(profile.id)
+        if not active:
+            QMessageBox.warning(
+                self, "Очистка кэша",
+                "Для безопасной очистки диск должен быть подключён. "
+                "После аварийного завершения в кэше могут остаться неотправленные "
+                "файлы, поэтому удалять его без проверки нельзя.",
+            )
+            return
+        answer = QMessageBox.question(
+            self, "Очистить кэш",
+            f"Проверить загрузки, отключить диск {profile.drive} "
+            "и удалить локальный кэш?\n\n"
+            "Это отключит диск до следующего ручного подключения. "
+            "Если есть незавершённые загрузки, открытые файлы или ошибки, "
+            "операция будет отменена.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            if svc_state is not None:
+                run_admin("clear-cache", profile.id)
+            else:
+                self.mounts.clear_cache(profile.id)
+            self.pending_mounts.pop(profile.id, None)
+            self.uploads_seen.discard(profile.id)
+            QMessageBox.information(
+                self, "Кэш очищен",
+                f"Локальный кэш {profile.name} очищен. Диск отключён. "
+                "Подключите его снова при необходимости.",
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Кэш не очищен", str(exc))
+        self.update_status()
+
+    def poll_transfers(self):
+        if self.monitor_pending:
+            return
+        profile = self.selected_profile()
+        if profile is None:
+            self.transfer_label.setText("Выберите подключённый диск.")
+            self.transfer_details.setText("Очередь: — | Передаются: — | Ошибки: —")
+            self.transfer_progress.setVisible(False)
+            return
+        active = (service_status(profile.id) == SERVICE_RUNNING
+                  if profile.service_mode else self.mounts.is_mounted(profile.id))
+        if not active:
+            self.transfer_label.setText("Диск не подключён.")
+            self.transfer_details.setText("Очередь: — | Передаются: — | Ошибки: —")
+            self.transfer_progress.setVisible(False)
+            return
+        self.monitor_pending = True
+        task = _MonitorTask(profile, self.mounts)
+        self.monitor_task = task
+        task.signals.finished.connect(self.on_transfers)
+        QThreadPool.globalInstance().start(task)
+
+    def on_transfers(self, profile_id: str, snapshot: TransferSnapshot | None, error: str):
+        self.monitor_pending = False
+        if self.selected_id() != profile_id:
+            return
+        if snapshot is None:
+            self.transfer_label.setText(
+                "Статистика rclone недоступна. Проверьте работу службы и RC."
+            )
+            self.transfer_details.setText("Нет данных: " + error[:180])
+            self.transfer_progress.setVisible(False)
+            return
+        self.transfer_details.setText(
+            f"Очередь: {snapshot.queued} | Передаются: {snapshot.uploading} | "
+            f"Ошибки: {snapshot.errors} | Кэш: {snapshot.cache_bytes / 1048576:.1f} МиБ"
+        )
+        in_flight = bool(snapshot.queued or snapshot.uploading)
+        if in_flight:
+            self.uploads_seen.add(profile_id)
+            self.transfer_label.setText(
+                ("Передаётся: " + snapshot.current_file[-90:]
+                 if snapshot.current_file else "Идёт фоновая передача в S3…")
+                + (f" ({snapshot.speed / 1048576:.1f} МиБ/с)" if snapshot.speed else "")
+            )
+            self.transfer_progress.setVisible(bool(snapshot.current_file))
+            self.transfer_progress.setValue(snapshot.percent)
+        else:
+            self.transfer_progress.setVisible(False)
+            if snapshot.errors:
+                self.transfer_label.setText("Есть ошибки загрузки. Проверьте журнал rclone.")
+            elif profile_id in self.uploads_seen:
+                self.uploads_seen.discard(profile_id)
+                self.transfer_label.setText("Все отслеженные файлы загружены в S3.")
+                self.statusBar().showMessage("S3Drive: загрузка файлов завершена", 8000)
+            else:
+                self.transfer_label.setText("Очередь загрузки пуста.")
+
     def update_status(self):
         profile = self.selected_profile()
         if profile is None:
             self.remove_service_button.setEnabled(False)
+            self.clear_cache_button.setEnabled(False)
             self.unmount_button.setEnabled(False)
             self.mount_button.setEnabled(True)
             return
@@ -472,6 +624,7 @@ class MainWindow(QMainWindow):
         active = service_running or user_running
         ready = active and os.path.isdir(disk_root(profile.drive))
         self.remove_service_button.setEnabled(service == SERVICE_STOPPED)
+        self.clear_cache_button.setEnabled(active)
         self.unmount_button.setEnabled(active)
         self.unmount_button.setText(
             "Остановить службу и диск" if service is not None

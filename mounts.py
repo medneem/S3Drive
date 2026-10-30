@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 
 from profiles import Profile, app_data_dir
 from background import BackgroundRecord, BackgroundRegistry
+from cache_ops import ensure_cache_idle, erase_cache_directory
 
 REMOTE = "s3drive_mount"
 
@@ -211,6 +212,25 @@ class MountManager:
             self.sessions.pop(profile.id, None)
             stream.close()
             raise
+
+    def clear_cache(self, profile_id: str) -> bool:
+        """Safely disconnect this live user mount before deleting VFS cache.
+
+        Refuse to delete offline/unknown caches: a crashed mount may still
+        have unsent data not represented in any live rclone statistics.
+        """
+        import uuid
+        uuid.UUID(profile_id)
+        if not self.is_mounted(profile_id):
+            raise RuntimeError(
+                "Для безопасной очистки подключите диск и дождитесь окончания передач. "
+                "Кэш остановленного или аварийно завершённого процесса не удаляется."
+            )
+        session = self.sessions[profile_id]
+        ensure_cache_idle(self._rc(session, "vfs/stats"))
+        self.stop(profile_id)
+        cache_root = app_data_dir() / "cache"
+        return erase_cache_directory(cache_root / profile_id, parent=cache_root)
 
     def stop(self, profile_id: str) -> None:
         if not self.is_mounted(profile_id):

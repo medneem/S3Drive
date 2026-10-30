@@ -109,5 +109,46 @@ class MountManagerTests(unittest.TestCase):
                 manager.set_keep_running(profile.id, False)
             self.assertFalse(reg.load()[profile.id].keep_running)
 
+    def test_clear_cache_blocks_dirty_vfs_without_stopping_mount(self):
+        from profiles import new_profile
+        from mounts import MountManager, Session
+        with tempfile.TemporaryDirectory() as root:
+            profile = new_profile(name="Test", endpoint="http://nas:8010",
+                                  bucket="backup", access_key="key", secret_key="secret")
+            manager = MountManager(self.registry(root))
+            manager.sessions[profile.id] = Session(profile, None, 4321, "password", 100, False)
+            with mock.patch.object(manager, "is_mounted", return_value=True):
+                with mock.patch.object(manager, "_rc", return_value={
+                    "inUse": 0,
+                    "diskCache": {"uploadsQueued": 1, "uploadsInProgress": 0, "erroredFiles": 0},
+                }):
+                    with mock.patch.object(manager, "stop") as stop:
+                        with self.assertRaisesRegex(RuntimeError, "Нельзя очищать"):
+                            manager.clear_cache(profile.id)
+                        stop.assert_not_called()
+
+    def test_clear_cache_stops_mount_before_removing_files(self):
+        from profiles import new_profile
+        from mounts import MountManager, Session
+        with tempfile.TemporaryDirectory() as root:
+            profile = new_profile(name="Test", endpoint="http://nas:8010",
+                                  bucket="backup", access_key="key", secret_key="secret")
+            manager = MountManager(self.registry(root))
+            manager.sessions[profile.id] = Session(profile, None, 4321, "password", 100, False)
+            cache_dir = Path(root) / "cache" / profile.id
+            cache_dir.mkdir(parents=True)
+            (cache_dir / "cached").write_text("data", encoding="utf-8")
+            with mock.patch("mounts.app_data_dir", return_value=Path(root)):
+                with mock.patch.object(manager, "is_mounted", return_value=True):
+                    with mock.patch.object(manager, "_rc", return_value={
+                        "inUse": 0,
+                        "diskCache": {"uploadsQueued": 0, "uploadsInProgress": 0, "erroredFiles": 0},
+                    }):
+                        with mock.patch.object(manager, "stop") as stop:
+                            self.assertTrue(manager.clear_cache(profile.id))
+                            stop.assert_called_once_with(profile.id)
+                            self.assertFalse(cache_dir.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -14,9 +14,12 @@ import re
 import secrets
 import socket
 import subprocess
+import time
 import uuid
 from pathlib import Path
 from urllib.request import Request, urlopen
+
+from cache_ops import ensure_cache_idle, erase_cache_directory
 
 SERVICE_PREFIX = "S3Drive-"
 SERVICE_STOPPED = 1
@@ -330,6 +333,32 @@ def stop_service(profile_id: str) -> None:
     control = json.loads(control_file.read_text(encoding="utf-8"))
     ensure_vfs_idle(control)
     _sc("stop", service_name(profile_id))
+
+
+def clear_service_cache(profile_id: str) -> bool:
+    """One UAC-approved transaction: validate, stop, then remove only its cache.
+
+    Refuse if the service is not running: after a crash we cannot prove that
+    files remaining in the offline cache were uploaded to S3.
+    """
+    if service_status(profile_id) != SERVICE_RUNNING:
+        raise RuntimeError(
+            "Нельзя очищать кэш остановленной службы: в нём могут быть "
+            "незагруженные файлы. Сначала запустите службу."
+        )
+    control = json.loads(
+        (service_dir(profile_id) / "control.json").read_text(encoding="utf-8")
+    )
+    ensure_cache_idle(_control_request(control["port"], control["password"], "vfs/stats"))
+    # stop_service rechecks the queue before shutting down.
+    stop_service(profile_id)
+    deadline = time.monotonic() + 30
+    while service_status(profile_id) != SERVICE_STOPPED:
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Служба ещё не остановлена. Кэш не удалён.")
+        time.sleep(0.2)
+    base = service_dir(profile_id)
+    return erase_cache_directory(base / "cache", parent=base)
 
 
 def remove_service(profile_id: str) -> None:

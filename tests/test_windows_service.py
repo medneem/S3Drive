@@ -1,5 +1,6 @@
 """Windows service integration: global mount command and safe shutdown policy."""
 import base64
+import json
 import tempfile
 import unittest
 from dataclasses import replace
@@ -8,7 +9,7 @@ from unittest.mock import patch
 
 from profiles import new_profile
 from windows_service import (
-    SERVICE_PREFIX, config_text, ensure_vfs_idle, service_command, service_name,
+    SERVICE_PREFIX, SERVICE_RUNNING, SERVICE_STOPPED, config_text, ensure_vfs_idle, service_command, service_name,
     windows_command_line,
 )
 
@@ -192,6 +193,33 @@ class ServiceTests(unittest.TestCase):
             "diskCache": {"uploadsQueued": 0, "uploadsInProgress": 0, "erroredFiles": 0}
         }):
             ensure_vfs_idle({"port": 42, "password": "secret"})
+
+
+    def test_cache_clear_refuses_stopped_service(self):
+        from windows_service import clear_service_cache
+        with patch("windows_service.service_status", return_value=SERVICE_STOPPED):
+            with patch("windows_service.erase_cache_directory") as erase:
+                with self.assertRaisesRegex(RuntimeError, "остановленной службы"):
+                    clear_service_cache(sample().id)
+                erase.assert_not_called()
+
+    def test_cache_clear_refuses_pending_uploads_before_stopping(self):
+        from windows_service import clear_service_cache
+        with tempfile.TemporaryDirectory() as root:
+            cache = Path(root)
+            (cache / "control.json").write_text(
+                json.dumps({"port": 4321, "password": "fixture"}), encoding="utf-8"
+            )
+            with patch("windows_service.service_dir", return_value=cache):
+                with patch("windows_service.service_status", return_value=SERVICE_RUNNING):
+                    with patch("windows_service._control_request", return_value={
+                        "inUse": 0,
+                        "diskCache": {"uploadsQueued": 1, "uploadsInProgress": 0, "erroredFiles": 0},
+                    }):
+                        with patch("windows_service.stop_service") as stop:
+                            with self.assertRaisesRegex(RuntimeError, "Нельзя очищать"):
+                                clear_service_cache(sample().id)
+                            stop.assert_not_called()
 
 
 if __name__ == "__main__":

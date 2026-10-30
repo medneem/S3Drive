@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from profiles import ProfileStore, config_path
-from windows_service import install_and_start, remove_service, stop_service
+from windows_service import clear_service_cache, install_and_start, remove_service, stop_service
 
 
 def run_action(action: str, profile_id: str) -> None:
@@ -32,6 +32,8 @@ def run_action(action: str, profile_id: str) -> None:
         stop_service(profile_id)
     elif action == "remove":
         remove_service(profile_id)
+    elif action == "clear-cache":
+        clear_service_cache(profile_id)
     else:
         raise ValueError("Недопустимое действие службы.")
 
@@ -39,7 +41,7 @@ def run_action(action: str, profile_id: str) -> None:
 def main() -> int:
     try:
         if len(sys.argv) != 3:
-            raise ValueError("Использование: S3DriveAdmin.exe install|stop|remove <profile-id>")
+            raise ValueError("Использование: S3DriveAdmin.exe install|stop|remove|clear-cache <profile-id>")
         run_action(sys.argv[1], sys.argv[2])
         return 0
     except Exception as exc:

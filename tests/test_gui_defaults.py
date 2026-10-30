@@ -43,5 +43,13 @@ class NewProfileDefaultsTests(unittest.TestCase):
         gui.service_checkbox.setChecked.assert_called_once_with(False)
 
 
+    def test_main_window_includes_cache_clear_button_and_transfer_monitor(self):
+        import inspect
+        source = inspect.getsource(MainWindow)
+        self.assertIn('QPushButton("Очистить кэш")', source)
+        self.assertIn('self.clear_cache_button.clicked.connect(self.clear_cache_profile)', source)
+        self.assertIn('self.monitor_timer.timeout.connect(self.poll_transfers)', source)
+
+
 if __name__ == "__main__":
     unittest.main()

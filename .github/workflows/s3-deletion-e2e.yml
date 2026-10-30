@@ -6,6 +6,10 @@ on:
     paths:
       - '.github/workflows/s3-deletion-e2e.yml'
       - 'tests/integration/test_s3_delete_windows.py'
+      - 'mounts.py'
+      - 'windows_service.py'
+      - 'tests/test_core.py'
+      - 'tests/test_windows_service.py'
   workflow_dispatch:
 
 permissions:

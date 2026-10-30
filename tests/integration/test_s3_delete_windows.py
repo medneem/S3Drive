@@ -117,8 +117,8 @@ class WindowsS3DeletionTests(unittest.TestCase):
         cache.mkdir()
         port = free_port()
         log_path = self.folder / ("rclone-" + uuid.uuid4().hex + ".log")
-        # Use production defaults for dir cache / polling unless the
-        # comparison case explicitly requests 0s.
+        # Use the production command (which refreshes S3 directory listings).
+        # Optional override is only for investigating a known-bad rclone mode.
         cmd = mount_command(profile, str(self.rclone), cache, port) + [
             "--log-level", "DEBUG",
             "--log-file", str(log_path),
@@ -209,11 +209,11 @@ class WindowsS3DeletionTests(unittest.TestCase):
                              "Root-mount directory reappeared after remount")
 
     def test_03_external_change_inside_cached_directory(self):
-        """Repro of stale VFS listing: new S3 object inserted after directory read.
+        """Regression: default S3Drive mount deletes externally inserted files.
 
-        A successful shutil.rmtree followed by remaining keys is a DATA
-        CONSISTENCY BUG. Do not accept a disappearing local folder as deletion.
-        A clean failure (ENOTEMPTY) is safer than false success.
+        Reproduced RED on production defaults before the fix: rclone reports
+        success while stale/album/late.txt survives and returns after remount.
+        GREEN requires server-side disappearance, not just Windows' view.
         """
         self.seed("stale/album/known.txt", "keep/ok.txt")
         outcome = None
@@ -248,11 +248,11 @@ class WindowsS3DeletionTests(unittest.TestCase):
             self.assertTrue(leftovers,
                             "The delete failed but test has no surviving data")
 
-    def test_04_no_dir_cache_prevents_false_deletion(self):
-        """Diagnostic candidate: list S3 on every access instead of stale VFS."""
+    def test_04_external_change_in_named_bucket_default_mount(self):
+        """The same race must be fixed for a named-bucket connection."""
         self.seed("fresh/album/known.txt", "keep/ok.txt")
-        with self.mounted(bucket="", dir_cache_time="0s") as root:
-            directory = root / self.bucket / "fresh"
+        with self.mounted(bucket=self.bucket) as root:
+            directory = root / "fresh"
             self.assertIn("album", os.listdir(directory))
             self.assertIn("known.txt", os.listdir(directory / "album"))
             self.s3.put_object(Bucket=self.bucket,
@@ -260,12 +260,12 @@ class WindowsS3DeletionTests(unittest.TestCase):
             shutil.rmtree(directory)
             self.assertFalse(directory.exists())
         survivors = self.remaining("fresh/")
-        print(f"dir-cache-time=0s survivors: {survivors}", flush=True)
+        print(f"production mount named-bucket survivors: {survivors}", flush=True)
         self.assertEqual(survivors, [],
                          "Zero directory-cache did not eliminate stale removal")
-        with self.mounted(bucket="", dir_cache_time="0s") as root:
-            self.assertFalse((root / self.bucket / "fresh").exists(),
-                             "Folder reappeared even with disabled dir cache")
+        with self.mounted(bucket=self.bucket) as root:
+            self.assertFalse((root / "fresh").exists(),
+                             "Folder reappeared with production mount settings")
 
 
 if __name__ == "__main__":

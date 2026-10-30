@@ -38,6 +38,8 @@ class ServiceTests(unittest.TestCase):
         self.assertIn(" mount ", cmd)
         self.assertIn("S:", cmd)
         self.assertIn("--vfs-cache-mode writes", cmd)
+        self.assertEqual(cmd.count("--dir-cache-time"), 1)
+        self.assertIn("--dir-cache-time 0s", cmd)
         self.assertIn("--rc-htpasswd", cmd)
         # Must be a real command line option, not code hidden by \n in a comment.
         self.assertIn(" -o FileSecurity=D:P(A;;FA;;;WD)", cmd)
@@ -105,6 +107,7 @@ class ServiceTests(unittest.TestCase):
             Path("C:/ProgramData/S3Drive/services/rc.htpasswd"), 45532,
         )
         self.assertIn("mount s3drive_mount: S:", command)
+        self.assertIn("--dir-cache-time 0s", command)
         self.assertNotIn("s3drive_mount:my-backup", command)
 
     def test_service_rclone_binary_is_isolated_per_profile(self):

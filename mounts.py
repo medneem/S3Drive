@@ -43,6 +43,11 @@ def mount_command(profile: Profile, executable: str, cache_dir: Path, port: int)
     return [
         executable, "mount", f"{REMOTE}:{profile.bucket}", profile.drive,
         "--vfs-cache-mode", "writes",
+        # S3 has no reliable directory-change notifications. The rclone VFS
+        # listing cache can hide objects added by another S3 client, making
+        # recursive deletion appear successful although keys remain on S3.
+        # Confirmed on Windows WinFsp + Moto S3 (2026-10-30).
+        "--dir-cache-time", "0s",
         "--cache-dir", str(cache_dir),
         # rclone v1.75.2 SetVolumeName uses len(vol) > 32, i.e. UTF-8 BYTES,
         # and slices the name before WinFsp receives it. Passing the

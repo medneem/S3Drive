@@ -141,8 +141,16 @@ class MountTests(unittest.TestCase):
         args = mount_command(p, "rclone.exe", Path("cache"), 12543)
         self.assertEqual(args[1:4], ["mount", "s3drive_mount:my-backup", "S:"])
         self.assertIn("--vfs-cache-mode", args)
+        self.assertEqual(args.count("--dir-cache-time"), 1)
+        self.assertEqual(args[args.index("--dir-cache-time") + 1], "0s")
         self.assertNotIn(p.secret_key, " ".join(args))
         self.assertNotIn(p.access_key, " ".join(args))
+
+    def test_fresh_directory_listing_applies_to_account_root(self):
+        p = sample(bucket="")
+        args = mount_command(p, "rclone.exe", Path("cache"), 12543)
+        self.assertEqual(args[2], "s3drive_mount:")
+        self.assertEqual(args[args.index("--dir-cache-time") + 1], "0s")
 
     def test_volume_label_uses_exact_profile_name(self):
         profile = sample(name="Личный сетевой диск")

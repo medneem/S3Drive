@@ -163,6 +163,9 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
     return windows_command_line([
         str(rclone), "mount", "s3drive_mount:" + profile.bucket,
         profile.drive, "--config", str(config), "--vfs-cache-mode", "writes",
+        # Refresh S3 directory listings instead of trusting stale VFS entries
+        # during recursive deletes (same policy as ordinary user mounts).
+        "--dir-cache-time", "0s",
         "--cache-dir", str(cache), "--log-file", str(log), "--log-level", "INFO",
         # JSONL содержит machine-readable core/stats. Без доступа к RC-паролю.
         "--use-json-log", "--stats", "2s", "--stats-log-level", "INFO",

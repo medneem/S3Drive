@@ -106,7 +106,7 @@ class WindowsS3DeletionTests(unittest.TestCase):
         )
 
     @contextlib.contextmanager
-    def mounted(self, *, bucket):
+    def mounted(self, *, bucket, dir_cache_time="1h"):
         """Spawn the SAME rclone mount args used by the S3Drive GUI."""
         profile = Profile(
             id=str(uuid.uuid4()), name="S3Drive CI", endpoint=self.endpoint,
@@ -118,7 +118,7 @@ class WindowsS3DeletionTests(unittest.TestCase):
         port = free_port()
         log_path = self.folder / ("rclone-" + uuid.uuid4().hex + ".log")
         cmd = mount_command(profile, str(self.rclone), cache, port) + [
-            "--dir-cache-time", "1h",
+            "--dir-cache-time", dir_cache_time,
             "--poll-interval", "0",
             "--log-level", "DEBUG",
             "--log-file", str(log_path),
@@ -245,6 +245,25 @@ class WindowsS3DeletionTests(unittest.TestCase):
         else:
             self.assertTrue(leftovers,
                             "The delete failed but test has no surviving data")
+
+    def test_04_no_dir_cache_prevents_false_deletion(self):
+        """Diagnostic candidate: list S3 on every access instead of stale VFS."""
+        self.seed("fresh/album/known.txt", "keep/ok.txt")
+        with self.mounted(bucket="", dir_cache_time="0s") as root:
+            directory = root / self.bucket / "fresh"
+            self.assertIn("album", os.listdir(directory))
+            self.assertIn("known.txt", os.listdir(directory / "album"))
+            self.s3.put_object(Bucket=self.bucket,
+                               Key="fresh/album/late.txt", Body=b"late")
+            shutil.rmtree(directory)
+            self.assertFalse(directory.exists())
+        survivors = self.remaining("fresh/")
+        print(f"dir-cache-time=0s survivors: {survivors}", flush=True)
+        self.assertEqual(survivors, [],
+                         "Zero directory-cache did not eliminate stale removal")
+        with self.mounted(bucket="", dir_cache_time="0s") as root:
+            self.assertFalse((root / self.bucket / "fresh").exists(),
+                             "Folder reappeared even with disabled dir cache")
 
 
 if __name__ == "__main__":

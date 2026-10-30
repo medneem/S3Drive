@@ -19,6 +19,8 @@ class S3DeletionWorkflowTests(unittest.TestCase):
         self.assertIn("self.remaining(", source)
         self.assertIn("with self.mounted(bucket=\"\")", source)
         self.assertIn("with self.mounted(bucket=self.bucket)", source)
+        self.assertIn('dir_cache_time="0s"', source)
+        self.assertIn("test_04_no_dir_cache_prevents_false_deletion", source)
         self.assertIn("reappeared after remount", source)
         self.assertIn("remote_environment(profile)", source)
         self.assertIn("mount_command(profile,", source)

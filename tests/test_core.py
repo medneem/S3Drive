@@ -33,6 +33,14 @@ class DependencyTests(unittest.TestCase):
 
 
 class ProfileTests(unittest.TestCase):
+    @staticmethod
+    def make_store(path):
+        return ProfileStore(
+            path,
+            encrypt=lambda value: "protected:" + value[::-1],
+            decrypt=lambda value: value.removeprefix("protected:")[::-1],
+        )
+
     def test_qnap_http_endpoint_with_path_style_is_valid(self):
         self.assertEqual(sample().endpoint, "http://nas.local:8010")
 

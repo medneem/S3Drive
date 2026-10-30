@@ -113,6 +113,12 @@ class DesktopActionTests(unittest.TestCase):
             existing.write_text("existing", encoding="utf-8")
             shell = Mock()
             shell.SpecialFolders.return_value = tmp
+            # WScript.Shell gives each .lnk its own object. A single Mock for
+            # every path would falsely treat the foreign shortcut as ours.
+            shell.CreateShortcut.side_effect = lambda path: (
+                Mock(TargetPath="C:\\", Description="Чужой ярлык")
+                if Path(path) == existing else Mock()
+            )
             location, created = create_desktop_shortcut("S:", "QNAP", shell)
             self.assertEqual(location, Path(tmp) / "QNAP (S).lnk")
             self.assertTrue(created)

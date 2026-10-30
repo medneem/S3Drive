@@ -32,7 +32,10 @@ def ensure_cache_idle(stats: dict) -> None:
     additional VFS references beyond its initial own reference are
     treated as ambiguous and deletion is refused.
     """
-    ensure_uploads_idle(stats)
+    try:
+        ensure_uploads_idle(stats)
+    except RuntimeError as exc:
+        raise RuntimeError("Нельзя очищать кэш: " + str(exc)) from exc
     references = int(stats["inUse"])
     if references > 1:
         raise RuntimeError(

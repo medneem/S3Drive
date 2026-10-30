@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-from cache_ops import ensure_cache_idle, erase_cache_directory
+from cache_ops import ensure_cache_idle, ensure_uploads_idle, erase_cache_directory
 
 SERVICE_PREFIX = "S3Drive-"
 SERVICE_STOPPED = 1
@@ -286,10 +286,14 @@ def _control_request(port: int, password: str, method: str) -> dict:
 
 
 def ensure_vfs_idle(control: dict) -> None:
-    """Fail closed on VFS write queue, errors or files that remain open."""
+    """Fail closed on pending, active or failed S3 writes.
+
+    Do not use vfs/stats inUse: rclone's default VFS reference is always 1,
+    independently of open file handles. Cache deletion has a separate check.
+    """
     stats = _control_request(control["port"], control["password"], "vfs/stats")
     try:
-        ensure_cache_idle(stats)
+        ensure_uploads_idle(stats)
     except RuntimeError as exc:
         raise RuntimeError("Нельзя остановить службу: " + str(exc)) from exc
 

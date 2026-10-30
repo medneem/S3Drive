@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 
 from profiles import Profile, app_data_dir
 from background import BackgroundRecord, BackgroundRegistry
-from cache_ops import ensure_cache_idle, erase_cache_directory
+from cache_ops import ensure_cache_idle, ensure_uploads_idle, erase_cache_directory
 
 REMOTE = "s3drive_mount"
 
@@ -240,7 +240,7 @@ class MountManager:
         # in the VFS cache that has not reached the S3 backend.
         try:
             stats = self._rc(session, "vfs/stats")
-            ensure_cache_idle(stats)
+            ensure_uploads_idle(stats)
         except (KeyError, TypeError, ValueError, OSError) as exc:
             raise RuntimeError(
                 "Не удалось проверить состояние VFS rclone; диск не отключён. "

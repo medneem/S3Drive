@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from cache_ops import ensure_cache_idle, erase_cache_directory
+from cache_ops import ensure_cache_idle, ensure_uploads_idle, erase_cache_directory
 from datetime import datetime, timedelta, timezone
 import json
 
@@ -13,7 +13,7 @@ from transfer_monitor import (parse_snapshot, parse_service_stats, latest_servic
 
 
 def clean_stats():
-    return {"inUse": 0, "diskCache": {
+    return {"inUse": 1, "diskCache": {
         "uploadsQueued": 0, "uploadsInProgress": 0, "erroredFiles": 0,
     }}
 
@@ -22,15 +22,34 @@ class CacheSafetyTests(unittest.TestCase):
     def test_idle_allows_cleanup(self):
         ensure_cache_idle(clean_stats())
 
-    def test_queued_active_failed_or_open_file_blocks_cache_clear(self):
+    def test_queued_active_or_failed_upload_blocks_both_actions(self):
         for key in ("uploadsQueued", "uploadsInProgress", "erroredFiles"):
             stats = clean_stats()
             stats["diskCache"][key] = 1
-            with self.subTest(key=key), self.assertRaises(RuntimeError):
-                ensure_cache_idle(stats)
+            for action in (ensure_uploads_idle, ensure_cache_idle):
+                with self.subTest(key=key, action=action.__name__):
+                    with self.assertRaises(RuntimeError):
+                        action(stats)
+
+    def test_vfs_in_use_baseline_is_not_an_open_file(self):
+        # rclone 1.75.2 vfs.New calls inUse.Store(1) before any files open.
         stats = clean_stats()
-        stats["inUse"] = 1
-        with self.assertRaises(RuntimeError):
+        self.assertEqual(stats["inUse"], 1)
+        ensure_uploads_idle(stats)
+        ensure_cache_idle(stats)
+
+    def test_extra_vfs_refs_only_block_destructive_cache_clear(self):
+        stats = clean_stats()
+        stats["inUse"] = 2
+        ensure_uploads_idle(stats)
+        with self.assertRaisesRegex(RuntimeError, "ссыл"):
+            ensure_cache_idle(stats)
+
+    def test_service_stop_does_not_require_in_use_counter(self):
+        stats = clean_stats()
+        stats.pop("inUse")
+        ensure_uploads_idle(stats)
+        with self.assertRaises(KeyError):
             ensure_cache_idle(stats)
 
     def test_missing_status_fails_closed(self):

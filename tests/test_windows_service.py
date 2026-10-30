@@ -229,27 +229,27 @@ class ServiceTests(unittest.TestCase):
             ensure_vfs_idle({"port": 42, "password": "secret"})
 
 
-    def test_open_files_block_service_stop_without_sc_call(self):
+    def test_service_stop_allowed_with_vfs_baseline_in_use_one(self):
         from windows_service import stop_service
+        profile_id = sample().id
         with patch("windows_service.service_status", return_value=SERVICE_RUNNING):
             with patch("windows_service.service_dir", return_value=Path("C:/fixture")):
                 with patch("pathlib.Path.read_text", return_value='{"port":42,"password":"pw"}'):
                     with patch("windows_service._control_request", return_value={
-                        "inUse": 2,
+                        "inUse": 1,
                         "diskCache": {"uploadsQueued": 0, "uploadsInProgress": 0,
                                       "erroredFiles": 0},
                     }):
                         with patch("windows_service._sc") as sc:
-                            with self.assertRaisesRegex(RuntimeError, "открыт"):
-                                stop_service(sample().id)
-                            sc.assert_not_called()
+                            stop_service(profile_id)
+                            sc.assert_called_once_with("stop", service_name(profile_id))
 
-    def test_missing_in_use_counter_blocks_service_stop(self):
+    def test_missing_in_use_counter_does_not_block_service_stop(self):
         with patch("windows_service._control_request", return_value={
-            "diskCache": {"uploadsQueued": 0, "uploadsInProgress": 0, "erroredFiles": 0},
+            "diskCache": {"uploadsQueued": 0, "uploadsInProgress": 0,
+                          "erroredFiles": 0},
         }):
-            with self.assertRaises(KeyError):
-                ensure_vfs_idle({"port": 42, "password": "pw"})
+            ensure_vfs_idle({"port": 42, "password": "pw"})
 
     def test_cache_clear_refuses_stopped_service(self):
         from windows_service import clear_service_cache

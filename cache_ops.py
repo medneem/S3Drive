@@ -5,18 +5,39 @@ import shutil
 from pathlib import Path
 
 
-def ensure_cache_idle(stats: dict) -> None:
-    """Fail closed: no queued, running, failed or still-open cached files."""
+def ensure_uploads_idle(stats: dict) -> None:
+    """Allow unmount only when VFS has no pending/active/failed S3 writes.
+
+    rclone v1.75.2 initialises VFS.inUse to 1 even when no file is open.
+    That counter tracks VFS references, not open file handles; it must
+    never be treated as a number of open files for normal unmount.
+    """
     disk = stats["diskCache"]
     queued = int(disk["uploadsQueued"])
     uploading = int(disk["uploadsInProgress"])
     failed = int(disk["erroredFiles"])
-    open_files = int(stats["inUse"])
-    if queued or uploading or failed or open_files:
+    if queued or uploading or failed:
         raise RuntimeError(
-            f"Нельзя очищать кэш: в очереди {queued}, загружаются {uploading}, "
-            f"ошибок {failed}, открытых файлов {open_files}. "
-            "Закройте файлы и дождитесь завершения передачи в S3."
+            f"В очереди {queued}, загружаются {uploading}, "
+            f"ошибок загрузки {failed}. "
+            "Закройте изменяемые файлы и дождитесь отправки в S3."
+        )
+
+
+def ensure_cache_idle(stats: dict) -> None:
+    """Conservative precheck for DESTRUCTIVE cache deletion.
+
+    Regular unmount uses ensure_uploads_idle() instead. Unlike a stop,
+    deleting the cache can irreversibly discard buffered writes, so
+    additional VFS references beyond its initial own reference are
+    treated as ambiguous and deletion is refused.
+    """
+    ensure_uploads_idle(stats)
+    references = int(stats["inUse"])
+    if references > 1:
+        raise RuntimeError(
+            f"Нельзя очищать кэш: дополнительных ссылок VFS {references - 1}. "
+            "Закройте файлы и дождитесь завершения операций с диском."
         )
 
 

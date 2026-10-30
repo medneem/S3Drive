@@ -99,34 +99,42 @@ class MountManagerTests(unittest.TestCase):
                     rc.assert_called_once()
             self.assertIn(profile.id, manager.sessions)
 
-    def test_open_file_blocks_unmount_without_sending_quit(self):
+    def test_vfs_reference_one_does_not_block_user_mount_stop(self):
         with tempfile.TemporaryDirectory() as root:
             profile = self.profile()
-            manager = MountManager(self.registry(root))
+            registry = self.registry(root)
+            manager = MountManager(registry)
             session = Session(profile, None, 4567, "pw", 1234, False)
             manager.sessions[profile.id] = session
-            with mock.patch.object(manager, "_rc_pid", return_value=1234):
-                with mock.patch.object(manager, "_rc", return_value={
-                    "inUse": 1,
-                    "diskCache": {"uploadsQueued": 0, "uploadsInProgress": 0,
-                                  "erroredFiles": 0},
-                }) as rc:
-                    with self.assertRaisesRegex(RuntimeError, "открыт"):
-                        manager.stop(profile.id)
-                    rc.assert_called_once_with(session, "vfs/stats")
-            self.assertIn(profile.id, manager.sessions)
+            def rc(_session, method, timeout=3):
+                if method == "vfs/stats":
+                    return {"inUse": 1, "diskCache": {
+                        "uploadsQueued": 0, "uploadsInProgress": 0,
+                        "erroredFiles": 0,
+                    }}
+                if method == "core/quit":
+                    return {}
+                raise AssertionError(method)
+            with mock.patch.object(manager, "_rc_pid", side_effect=[1234, None, None]):
+                with mock.patch.object(manager, "_rc", side_effect=rc) as request:
+                    manager.stop(profile.id)
+            self.assertEqual([call.args[1] for call in request.call_args_list],
+                             ["vfs/stats", "core/quit"])
+            self.assertNotIn(profile.id, manager.sessions)
 
-    def test_missing_in_use_status_blocks_unmount(self):
+    def test_missing_in_use_does_not_block_safe_unmount(self):
         with tempfile.TemporaryDirectory() as root:
             profile = self.profile()
             manager = MountManager(self.registry(root))
             manager.sessions[profile.id] = Session(profile, None, 4567, "pw", 1234, False)
-            with mock.patch.object(manager, "_rc_pid", return_value=1234):
-                with mock.patch.object(manager, "_rc", return_value={
-                    "diskCache": {"uploadsQueued": 0, "uploadsInProgress": 0, "erroredFiles": 0}
-                }):
-                    with self.assertRaisesRegex(RuntimeError, "Не удалось проверить"):
-                        manager.stop(profile.id)
+            with mock.patch.object(manager, "_rc_pid", side_effect=[1234, None, None]):
+                with mock.patch.object(manager, "_rc", side_effect=[
+                    {"diskCache": {"uploadsQueued": 0, "uploadsInProgress": 0,
+                                   "erroredFiles": 0}},
+                    {},
+                ]):
+                    manager.stop(profile.id)
+            self.assertNotIn(profile.id, manager.sessions)
 
     def test_background_mode_toggle_persists_for_live_disk(self):
         with tempfile.TemporaryDirectory() as root:

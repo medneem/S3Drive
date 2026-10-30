@@ -132,6 +132,7 @@ class TransferDialogTests(unittest.TestCase):
             monitor_pending=True, profiles=[profile], monitor_last_error="",
             idle_polls=0, uploads_seen=set(), dismissed_uploads=set(),
             transfer_popup=None, transfer_popup_profile=None,
+            dismiss_current_transfer=Mock(),
         )
         with patch("main.TransferWindow") as dialog:
             MainWindow.on_transfers(ui, profile.id, state, "")

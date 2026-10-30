@@ -1,0 +1,68 @@
+name: S3 deletion E2E (Windows WinFsp)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/s3-deletion-e2e.yml'
+      - 'tests/integration/test_s3_delete_windows.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deletion-e2e:
+    name: Delete directories on real WinFsp mount + local S3
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Install isolated S3 test backend
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install "moto[server]==5.2.2" boto3
+          if ($LASTEXITCODE -ne 0) { throw "Moto S3 installation failed" }
+
+      - name: Download exact production rclone and WinFsp (SHA256 verified)
+        shell: pwsh
+        run: ./scripts/download_dependencies.ps1
+
+      - name: Install WinFsp driver for mount integration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $msi = (Resolve-Path "tools/winfsp-2.2.26215.msi").Path
+          $installerLog = Join-Path $env:RUNNER_TEMP "winfsp-install.log"
+          $process = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            "/i", """$msi""", "/qn", "/norestart", "/L*v", """$installerLog"""
+          )
+          if ($process.ExitCode -ne 0) {
+            Get-Content $installerLog -Tail 70
+            throw "WinFsp installer exit code: $($process.ExitCode)"
+          }
+
+      - name: Three real mount + S3 API deletion checks
+        shell: pwsh
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: |
+          $ErrorActionPreference = "Continue"
+          $failures = 0
+          for ($pass = 1; $pass -le 3; $pass++) {
+            Write-Host "=== S3 deletion end-to-end verification $pass/3 ==="
+            python -m unittest discover -s tests/integration -p 'test_s3_delete_windows.py' -v
+            if ($LASTEXITCODE -ne 0) {
+              $failures++
+              Write-Host "::error::S3 directory deletion verification failed in pass $pass"
+            }
+          }
+          if ($failures -gt 0) {
+            throw "$failures/3 S3 deletion verification runs failed. Check reappearing prefixes."
+          }

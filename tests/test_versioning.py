@@ -36,6 +36,17 @@ class VersioningTests(unittest.TestCase):
         self.assertIn("filevers=(1, 0, 0, 0)", metadata)
         self.assertIn("ProductVersion', '1.0.0'", metadata)
 
+    def test_ci_builds_only_onefile_windows_archive(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github" /
+                    "workflows" / "build-windows.yml").read_text(encoding="utf-8")
+        self.assertIn("--onefile --windowed --name S3Drive", workflow)
+        self.assertIn("name: S3Drive-windows-x64-${{ github.run_id }}", workflow)
+        self.assertIn("path: S3Drive-v*-windows-x64.zip", workflow)
+        self.assertIn('gh release create "$tag" "$zip"', workflow)
+        self.assertNotIn("--onedir", workflow)
+        self.assertNotIn("antivirus diagnostic archive", workflow.lower())
+        self.assertNotIn("windows-x64-onedir", workflow)
+
     def test_stamping_release_updates_app_and_resource_versions(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

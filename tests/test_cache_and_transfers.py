@@ -2,10 +2,10 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from cache_ops import ensure_cache_idle, erase_cache_directory
-from transfer_monitor import parse_snapshot, service_rc_port, _public_rc
+from transfer_monitor import parse_snapshot, read_service_rc_port, service_rc_port, _public_rc
 
 
 def clean_stats():
@@ -94,6 +94,23 @@ class TransferMonitorTests(unittest.TestCase):
             service_rc_port("--rc-addr 0.0.0.0:45833")
         with self.assertRaises(ValueError):
             service_rc_port("--rc-addr 127.0.0.1:99999")
+
+    def test_service_status_poll_never_flashes_a_console_on_windows(self):
+        # In the packaged GUI subprocess has CREATE_NO_WINDOW, but no console.
+        result = Mock(returncode=0, stdout=(
+            "BINARY_PATH_NAME : C:\\rclone.exe mount s3drive_mount: "
+            "S: --rc-addr 127.0.0.1:45833 --rc-htpasswd auth"
+        ))
+        with patch("transfer_monitor.subprocess.CREATE_NO_WINDOW",
+                   0x08000000, create=True):
+            with patch("transfer_monitor.subprocess.run", return_value=result) as run:
+                port = read_service_rc_port("S3Drive-test")
+        self.assertEqual(port, 45833)
+        run.assert_called_once_with(
+            ["sc.exe", "qc", "S3Drive-test"],
+            capture_output=True, text=True, timeout=4, check=False,
+            creationflags=0x08000000,
+        )
 
     def test_public_rc_refuses_privileged_methods(self):
         with self.assertRaises(ValueError):

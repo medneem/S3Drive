@@ -56,6 +56,8 @@ def read_service_rc_port(service: str) -> int:
     result = subprocess.run(
         ["sc.exe", "qc", service], capture_output=True, text=True,
         timeout=4, check=False,
+        # A windowed PyInstaller app must not flash a console on every poll.
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if result.returncode != 0:
         raise RuntimeError("Не удалось прочитать конфигурацию службы.")

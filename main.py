@@ -13,7 +13,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
-    QPushButton, QProgressBar, QVBoxLayout, QWidget,
+    QPushButton, QProgressBar, QSystemTrayIcon, QMenu, QVBoxLayout, QWidget,
 )
 
 from dependencies import winfsp_installed, winfsp_installer
@@ -29,6 +29,7 @@ from mounts import MountManager
 from profiles import Profile, ProfileStore, app_data_dir, config_path
 from version import APP_VERSION
 from transfer_monitor import read_user_snapshot, read_service_snapshot, TransferSnapshot
+from tray_startup import get_tray_autostart, set_tray_autostart
 
 
 def app_icon() -> QIcon:
@@ -74,7 +75,7 @@ class TransferWindow(QDialog):
 
     dismissed = Signal(str)
 
-    def __init__(self, profile: Profile, parent: QWidget):
+    def __init__(self, profile: Profile, parent: QWidget | None = None):
         super().__init__(parent)
         self.profile_id = profile.id
         self.setWindowTitle(f"Загрузка в S3 — {profile.name} ({profile.drive})")
@@ -260,6 +261,7 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self.update_status)
         self.timer.start(1500)
         self.monitor_pending = False
+        self.monitor_index = 0
         self.uploads_seen: set[str] = set()
         self.dismissed_uploads: set[str] = set()
         self.transfer_popup: TransferWindow | None = None
@@ -269,7 +271,57 @@ class MainWindow(QMainWindow):
         self.monitor_timer = QTimer(self)
         self.monitor_timer.timeout.connect(self.poll_transfers)
         self.monitor_timer.start(1500)
+        self.quitting = False
+        self.tray_notice_shown = False
+        self.tray: QSystemTrayIcon | None = None
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray = QSystemTrayIcon(app_icon(), self)
+            self.tray.setToolTip("S3Drive — монитор загрузки в S3")
+            menu = QMenu(self)
+            open_action = menu.addAction("Открыть S3Drive")
+            open_action.triggered.connect(self.restore_window)
+            self.autostart_action = menu.addAction("Запускать монитор вместе с Windows")
+            self.autostart_action.setCheckable(True)
+            try:
+                self.autostart_action.setChecked(get_tray_autostart())
+            except OSError:
+                self.autostart_action.setChecked(False)
+            self.autostart_action.toggled.connect(self.toggle_autostart)
+            menu.addSeparator()
+            exit_action = menu.addAction("Выход из S3Drive")
+            exit_action.triggered.connect(self.exit_from_tray)
+            self.tray.setContextMenu(menu)
+            self.tray.activated.connect(self.on_tray_activated)
+            self.tray.show()
+            QApplication.instance().setQuitOnLastWindowClosed(False)
         self.statusBar().showMessage(f"Конфигурация: {config_path()} | Кэш и журналы: {app_data_dir()}")
+
+    def restore_window(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self.restore_window()
+
+    def toggle_autostart(self, checked: bool):
+        try:
+            set_tray_autostart(checked)
+        except OSError as exc:
+            self.autostart_action.blockSignals(True)
+            self.autostart_action.setChecked(not checked)
+            self.autostart_action.blockSignals(False)
+            QMessageBox.warning(self, "Автозапуск S3Drive", str(exc))
+
+    def exit_from_tray(self):
+        self.quitting = True
+        if self.close():
+            if self.tray is not None:
+                self.tray.hide()
+            QApplication.quit()
+        else:
+            self.quitting = False
 
     def selected_id(self) -> str | None:
         item = self.items.currentItem()
@@ -611,19 +663,26 @@ class MainWindow(QMainWindow):
     def poll_transfers(self):
         if self.monitor_pending:
             return
-        profile = self.selected_profile()
-        if profile is None:
+        # Мониторить все работающие диски, а не только выделенную запись:
+        # при скрытом окне выбранный профиль может вообще не быть активным.
+        active_profiles = [
+            p for p in self.profiles
+            if (service_status(p.id) == SERVICE_RUNNING
+                if p.service_mode else self.mounts.is_mounted(p.id))
+        ]
+        if not active_profiles:
             self.hide_transfer_popup()
             return
-        if self.transfer_popup_profile != profile.id and self.transfer_popup is not None:
+        if (self.transfer_popup is not None and not any(
+                p.id == self.transfer_popup_profile for p in active_profiles)):
             self.hide_transfer_popup()
-        active = (service_status(profile.id) == SERVICE_RUNNING
-                  if profile.service_mode else self.mounts.is_mounted(profile.id))
-        if not active:
-            self.hide_transfer_popup()
-            self.uploads_seen.discard(profile.id)
-            self.dismissed_uploads.discard(profile.id)
-            return
+        if (self.transfer_popup_profile and
+                any(p.id == self.transfer_popup_profile for p in active_profiles)):
+            profile = next(p for p in active_profiles
+                           if p.id == self.transfer_popup_profile)
+        else:
+            profile = active_profiles[self.monitor_index % len(active_profiles)]
+            self.monitor_index += 1
         self.monitor_pending = True
         task = _MonitorTask(profile, self.mounts)
         self.monitor_task = task
@@ -632,7 +691,8 @@ class MainWindow(QMainWindow):
 
     def on_transfers(self, profile_id: str, snapshot: TransferSnapshot | None, error: str):
         self.monitor_pending = False
-        if self.selected_id() != profile_id:
+        profile = next((p for p in self.profiles if p.id == profile_id), None)
+        if profile is None:
             return
         if snapshot is None:
             if error != self.monitor_last_error:
@@ -648,10 +708,7 @@ class MainWindow(QMainWindow):
             if profile_id in self.dismissed_uploads:
                 return
             if self.transfer_popup is None:
-                profile = self.selected_profile()
-                if profile is None:
-                    return
-                self.transfer_popup = TransferWindow(profile, self)
+                self.transfer_popup = TransferWindow(profile, None)
                 self.transfer_popup_profile = profile_id
                 self.transfer_popup.dismissed.connect(self.dismiss_current_transfer)
                 self.transfer_popup.show()
@@ -705,6 +762,21 @@ class MainWindow(QMainWindow):
         self.status.setText(f"{profile.drive}: {text}")
 
     def closeEvent(self, event):
+        # Keep a GUI monitor in the interactive session even when only the
+        # LocalSystem Windows service is mounting disks. Services in Session 0
+        # cannot display user-facing windows.
+        if self.tray is not None and self.tray.isVisible() and not self.quitting:
+            event.ignore()
+            self.hide()
+            if not self.tray_notice_shown:
+                self.tray.showMessage(
+                    "S3Drive работает в фоне",
+                    "Монитор загрузок продолжает работать. Открыть программу "
+                    "можно через значок в системном трее.",
+                    QSystemTrayIcon.MessageIcon.Information, 5000,
+                )
+                self.tray_notice_shown = True
+            return
         running = [
             self.mounts.sessions[p.id] for p in self.profiles
             if self.mounts.is_mounted(p.id)
@@ -787,18 +859,20 @@ def main() -> int:
     with SingleInstance() as instance:
         app = QApplication(sys.argv)
         if not instance.acquired:
-            QMessageBox.information(
-                None, "S3Drive уже запущен",
-                "S3Drive уже запущен.\n"
-                "Закройте существующее окно программы, если хотите открыть её заново.",
-            )
+            if "--tray" not in sys.argv:
+                QMessageBox.information(
+                    None, "S3Drive уже запущен",
+                    "S3Drive уже запущен в системном трее.\n"
+                    "Откройте существующее окно через значок S3Drive возле часов.",
+                )
             return 0
         if not startup_ready():
             return 1
         app.setApplicationName("S3Drive")
         app.setWindowIcon(app_icon())
         window = MainWindow()
-        window.show()
+        if "--tray" not in sys.argv or window.tray is None:
+            window.show()
         return app.exec()
 
 

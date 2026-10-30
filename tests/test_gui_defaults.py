@@ -55,5 +55,61 @@ class NewProfileDefaultsTests(unittest.TestCase):
         self.assertNotIn('self.transfer_label = QLabel', source)
 
 
+    def test_closing_main_window_hides_to_tray_and_keeps_monitor_active(self):
+        from main import MainWindow
+        from unittest.mock import Mock
+        from types import SimpleNamespace
+        ui = SimpleNamespace(
+            tray=Mock(), quitting=False, hide=Mock(),
+            tray_notice_shown=True,
+        )
+        ui.tray.isVisible.return_value = True
+        event = Mock()
+        MainWindow.closeEvent(ui, event)
+        event.ignore.assert_called_once_with()
+        ui.hide.assert_called_once_with()
+
+    def test_user_can_explicitly_quit_from_tray(self):
+        from main import MainWindow
+        from unittest.mock import Mock, patch
+        from types import SimpleNamespace
+        ui = SimpleNamespace(quitting=False, close=Mock(return_value=True), tray=Mock())
+        with patch("main.QApplication") as app:
+            MainWindow.exit_from_tray(ui)
+        self.assertTrue(ui.quitting)
+        ui.close.assert_called_once_with()
+        ui.tray.hide.assert_called_once_with()
+        app.quit.assert_called_once_with()
+
+    def test_monitor_checks_running_service_even_if_other_profile_is_selected(self):
+        from main import MainWindow
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        other = SimpleNamespace(id="other", service_mode=True)
+        running = SimpleNamespace(id="running", service_mode=True)
+        ui = SimpleNamespace(
+            monitor_pending=False, profiles=[other, running],
+            mounts=Mock(), transfer_popup_profile=None, transfer_popup=None,
+            monitor_index=0,
+        )
+        with patch("main.service_status",
+                   side_effect=lambda pid: 4 if pid == "running" else 1):
+            with patch("main._MonitorTask") as task:
+                with patch("main.QThreadPool.globalInstance") as pool:
+                    MainWindow.poll_transfers(ui)
+        task.assert_called_once_with(running, ui.mounts)
+        pool.return_value.start.assert_called_once_with(task.return_value)
+        self.assertTrue(ui.monitor_pending)
+
+    def test_transfer_dialog_has_no_hidden_main_window_parent(self):
+        import inspect
+        from main import MainWindow
+        source = inspect.getsource(MainWindow)
+        self.assertIn("TransferWindow(profile, None)", source)
+        self.assertIn("QSystemTrayIcon(", source)
+        self.assertIn("self.monitor_timer.timeout.connect(self.poll_transfers)", source)
+
+
+
 if __name__ == "__main__":
     unittest.main()

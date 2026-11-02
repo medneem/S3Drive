@@ -110,6 +110,17 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("--dir-cache-time 0s", command)
         self.assertNotIn("s3drive_mount:my-backup", command)
 
+    def test_service_deletes_s3_directory_markers(self):
+        for bucket in ("my-backup", ""):
+            with self.subTest(bucket=bucket):
+                profile = sample()
+                profile.bucket = bucket
+                command = service_command(
+                    profile, Path("C:/rclone.exe"), Path("C:/rclone.conf"),
+                    Path("C:/cache"), Path("C:/log"), Path("C:/auth"), 33333,
+                )
+                self.assertEqual(command.count("--s3-directory-markers"), 1)
+
     def test_service_rclone_binary_is_isolated_per_profile(self):
         from windows_service import service_rclone_path
         p1 = sample()

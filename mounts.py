@@ -48,6 +48,10 @@ def mount_command(profile: Profile, executable: str, cache_dir: Path, port: int)
         # recursive deletion appear successful although keys remain on S3.
         # Confirmed on Windows WinFsp + Moto S3 (2026-10-30).
         "--dir-cache-time", "0s",
+        # External S3 clients may create zero-byte "folder/" objects.
+        # Without directory markers, rclone S3 Rmdir is a no-op and those
+        # folders survive after their files have been removed.
+        "--s3-directory-markers",
         "--cache-dir", str(cache_dir),
         # rclone v1.75.2 SetVolumeName uses len(vol) > 32, i.e. UTF-8 BYTES,
         # and slices the name before WinFsp receives it. Passing the

@@ -267,6 +267,40 @@ class WindowsS3DeletionTests(unittest.TestCase):
             self.assertFalse((root / "fresh").exists(),
                              "Folder reappeared with production mount settings")
 
+    def test_05_delete_external_directory_markers_in_named_bucket(self):
+        """Cyberduck-style zero-byte directory objects must vanish too."""
+        self.seed("marked/album/tracks/01.flac", "keep/ok.txt")
+        for key in ("marked/", "marked/album/", "marked/album/tracks/"):
+            self.s3.put_object(Bucket=self.bucket, Key=key, Body=b"")
+        with self.mounted(bucket=self.bucket) as root:
+            target = root / "marked"
+            self.assertTrue((target / "album" / "tracks" / "01.flac").is_file())
+            shutil.rmtree(target)
+            self.assertFalse(target.exists())
+        self.assertEqual(self.remaining("marked/"), [],
+                         "S3 directory-marker keys remained after Explorer deletion")
+        self.assertEqual(self.remaining("keep/"), ["keep/ok.txt"])
+        with self.mounted(bucket=self.bucket) as root:
+            self.assertFalse((root / "marked").exists(),
+                             "S3 directory marker brought folder back after remount")
+
+    def test_06_delete_empty_marked_directories_from_account_root(self):
+        """Empty directories from another S3 client must be removable."""
+        self.seed("keep/ok.txt")
+        for key in ("empty/", "empty/nested/", "empty/nested/deeper/"):
+            self.s3.put_object(Bucket=self.bucket, Key=key, Body=b"")
+        with self.mounted(bucket="") as root:
+            target = root / self.bucket / "empty"
+            self.assertTrue((target / "nested" / "deeper").is_dir())
+            shutil.rmtree(target)
+            self.assertFalse(target.exists())
+        self.assertEqual(self.remaining("empty/"), [],
+                         "Empty Cyberduck-style directory markers remain in S3")
+        self.assertEqual(self.remaining("keep/"), ["keep/ok.txt"])
+        with self.mounted(bucket="") as root:
+            self.assertFalse((root / self.bucket / "empty").exists(),
+                             "Empty S3 folders reappeared after remount")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

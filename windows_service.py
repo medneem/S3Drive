@@ -166,6 +166,9 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
         # Refresh S3 directory listings instead of trusting stale VFS entries
         # during recursive deletes (same policy as ordinary user mounts).
         "--dir-cache-time", "0s",
+        # Remove S3 "folder/" marker objects when Explorer removes a directory.
+        # Without this flag S3 backend Rmdir leaves the marker behind.
+        "--s3-directory-markers",
         "--cache-dir", str(cache), "--log-file", str(log), "--log-level", "INFO",
         # JSONL содержит machine-readable core/stats. Без доступа к RC-паролю.
         "--use-json-log", "--stats", "2s", "--stats-log-level", "INFO",

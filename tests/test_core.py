@@ -152,6 +152,15 @@ class MountTests(unittest.TestCase):
         self.assertEqual(args[2], "s3drive_mount:")
         self.assertEqual(args[args.index("--dir-cache-time") + 1], "0s")
 
+    def test_s3_directory_markers_are_enabled_for_folder_removal(self):
+        # S3 clients can leave zero-byte prefix markers such as album/.
+        # Without this flag rclone S3 Rmdir() does not delete them.
+        for bucket in ("my-backup", ""):
+            with self.subTest(bucket=bucket):
+                p = sample(bucket=bucket)
+                args = mount_command(p, "rclone.exe", Path("cache"), 12543)
+                self.assertEqual(args.count("--s3-directory-markers"), 1)
+
     def test_volume_label_uses_exact_profile_name(self):
         profile = sample(name="Личный сетевой диск")
         args = mount_command(profile, "rclone.exe", Path("cache"), 12543)

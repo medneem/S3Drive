@@ -204,7 +204,7 @@ class PackagingTests(unittest.TestCase):
     def test_distribution_has_standalone_updater(self):
         workflow = (Path(__file__).resolve().parents[1] /
                     ".github" / "workflows" / "build-windows.yml").read_text("utf-8")
-        self.assertIn("--onefile --console --name S3DriveUpdater", workflow)
+        self.assertIn("--onefile --windowed --name S3DriveUpdater", workflow)
         self.assertIn('"S3DriveUpdater.exe"', workflow)
         self.assertIn("dist/S3DriveUpdater.exe", workflow)
 

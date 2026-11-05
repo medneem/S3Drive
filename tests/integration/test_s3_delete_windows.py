@@ -334,6 +334,15 @@ class WindowsS3DeletionTests(unittest.TestCase):
         buckets = {item["Name"] for item in self.s3.list_buckets()["Buckets"]}
         print("bucket delete: visible immediately =", visible_after_delete,
               "present in S3 API =", self.bucket in buckets, flush=True)
+        if self.bucket in buckets:
+            print("bucket delete survivors:", self.remaining(""), flush=True)
+            logs = list(self.folder.glob("rclone-*.log"))
+            if logs:
+                recent = max(logs, key=lambda item: item.stat().st_mtime)
+                events = [line for line in recent.read_text(encoding="utf-8", errors="replace").splitlines()
+                          if any(word in line.lower() for word in
+                                 ("rmdir", "remove", "delete", "bucket", "marker", "error"))]
+                print("bucket delete rclone debug:", "\\n".join(events[-55:]), flush=True)
         self.assertNotIn(self.bucket, buckets,
                          "Explorer removed the bucket directory but S3 retained it")
         with self.mounted(bucket="") as root:

@@ -34,6 +34,11 @@ def wait_for_parent_exit(pid: int, *, timeout_ms: int = 120_000) -> None:
 
     handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
     if not handle:
+        # PyInstaller onefile startup is slower than the GUI shutdown.
+        # ERROR_INVALID_PARAMETER means this PID already exited; that is
+        # exactly the state we waited for, not a reason to abort an update.
+        if ctypes.get_last_error() == 87:  # ERROR_INVALID_PARAMETER
+            return
         raise RuntimeError("Не удалось убедиться, что S3Drive завершён.")
     try:
         if kernel.WaitForSingleObject(handle, timeout_ms) != 0:  # WAIT_OBJECT_0

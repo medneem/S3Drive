@@ -134,6 +134,17 @@ class ArchiveTests(unittest.TestCase):
 
 
 class InstallationTests(unittest.TestCase):
+    @unittest.skipUnless(__import__("os").name == "nt", "Windows process wait")
+    def test_parent_already_exited_is_not_an_update_failure(self):
+        from update_helper import wait_for_parent_exit
+        with patch("update_helper.ctypes.WinDLL") as win_dll:
+            win_dll.return_value.OpenProcess.return_value = None
+            with patch("update_helper.ctypes.get_last_error", return_value=87):
+                wait_for_parent_exit(12345)
+            with patch("update_helper.ctypes.get_last_error", return_value=5):
+                with self.assertRaises(RuntimeError):
+                    wait_for_parent_exit(12345)
+
     def test_replaces_only_program_files_preserving_config_and_services(self):
         payload = bundle_bytes()
         with tempfile.TemporaryDirectory() as td:

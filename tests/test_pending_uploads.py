@@ -84,10 +84,7 @@ class PendingUploadTests(unittest.TestCase):
     def test_service_rc_response_decodes_utf8_without_mojibake(self):
         queue = {"queue": [{"name": "test/Привет – музыка/песня.flac", "id": 123}]}
         stream = io.BytesIO(json.dumps(queue, ensure_ascii=False).encode("utf-8"))
-        response = Mock()
-        response.__enter__ = Mock(return_value=stream)
-        response.__exit__ = Mock(return_value=False)
-        with patch("windows_service.urlopen", return_value=response):
+        with patch("windows_service.urlopen", return_value=stream):
             decoded = _control_request(12345, "secret", "vfs/queue")
         self.assertEqual(decoded, queue)
         self.assertNotIn("â", decoded["queue"][0]["name"])

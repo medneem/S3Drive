@@ -67,6 +67,76 @@ class ManualUpdateButtonTests(unittest.TestCase):
         gui.update_button.setEnabled.assert_called_once_with(False)
         gui.update_button.setText.assert_called_once_with("Загрузка…")
 
+    def test_cancelled_close_never_starts_updater(self):
+        from auto_update import StagedUpdate
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            folder = Path(td) / "staged"
+            folder.mkdir()
+            archive = folder / "update.zip"
+            archive.write_bytes(b"archive")
+            staged = StagedUpdate(archive, "a" * 64, "1.3.0", folder)
+            gui = SimpleNamespace(
+                update_button=Mock(), profiles=[], mounts=Mock(),
+                close=Mock(return_value=False), show=Mock(),
+            )
+            with patch("main.QApplication") as app, patch("main.launch_updater") as launch:
+                MainWindow.on_release_downloaded(gui, staged, "")
+                launch.assert_not_called()
+                gui.update_button.setEnabled.assert_called_once_with(True)
+                app.instance.return_value.setQuitOnLastWindowClosed.assert_any_call(True)
+            self.assertFalse(folder.exists())
+
+    def test_active_background_disk_blocks_update(self):
+        from auto_update import StagedUpdate
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            folder = Path(td) / "staged"
+            folder.mkdir()
+            archive = folder / "update.zip"
+            archive.write_bytes(b"archive")
+            staged = StagedUpdate(archive, "a" * 64, "1.3.0", folder)
+            gui = SimpleNamespace(
+                update_button=Mock(),
+                profiles=[SimpleNamespace(id="p1", drive="S:", keep_running=True)],
+                mounts=Mock(), close=Mock(),
+            )
+            gui.mounts.is_mounted.return_value = True
+            with patch("main.QMessageBox") as message, patch("main.launch_updater") as launch:
+                MainWindow.on_release_downloaded(gui, staged, "")
+                launch.assert_not_called()
+                gui.close.assert_not_called()
+                message.warning.assert_called_once()
+            self.assertFalse(folder.exists())
+
+    def test_accepted_close_launches_updater_without_touching_services(self):
+        from auto_update import StagedUpdate
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            folder = Path(td) / "staged"
+            folder.mkdir()
+            archive = folder / "update.zip"
+            archive.write_bytes(b"archive")
+            staged = StagedUpdate(archive, "a" * 64, "1.3.0", folder)
+            gui = SimpleNamespace(
+                update_button=Mock(),
+                profiles=[SimpleNamespace(id="s1", drive="S:", keep_running=False,
+                                         service_mode=True)],
+                mounts=Mock(), close=Mock(return_value=True), show=Mock(),
+            )
+            with patch("main.QApplication") as app, patch("main.launch_updater") as launch:
+                MainWindow.on_release_downloaded(gui, staged, "")
+                gui.close.assert_called_once()
+                launch.assert_called_once()
+                app.instance.return_value.quit.assert_called_once()
+            self.assertTrue(folder.exists())  # updater owns it after GUI exits
+
     def test_click_does_nothing_if_no_release(self):
         gui = SimpleNamespace(
             available_release=None, update_button=Mock(), update_pool=Mock(),

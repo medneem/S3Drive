@@ -183,7 +183,7 @@ class WindowsS3DeletionTests(unittest.TestCase):
         for bucket in (self.bucket, ""):
             with self.subTest(bucket=bucket):
                 with self.mounted(bucket=bucket):
-                    drive_type = ctypes.windll.kernel32.GetDriveTypeW(self.drive + "\\\\")
+                    drive_type = ctypes.windll.kernel32.GetDriveTypeW(self.drive + "\\")
                     self.assertEqual(
                         drive_type, DRIVE_REMOTE,
                         "Windows sees S3Drive as local; MSI*.tmp directories may "

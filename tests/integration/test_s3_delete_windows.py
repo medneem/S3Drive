@@ -351,5 +351,36 @@ class WindowsS3DeletionTests(unittest.TestCase):
         self.assertFalse(visible_after_delete, "Bucket stayed visible before remount")
 
 
+    def test_08_unicode_names_upload_immediately_and_delete_fully(self):
+        """UTF-8/en dash are valid S3 keys, not a reason to strand VFS writes.
+
+        Exercise the *actual* mounted WinFsp drive, confirm that a closed
+        file reaches S3, and remove its parent directory. The S3 API must
+        show no remaining objects, including directory markers.
+        """
+        album = "Bomfunk MC's – In Stereo [2000] – Музыка"
+        track = "03 – Привет 世界.flac"
+        prefix = f"test/{album}/"
+        key = prefix + track
+        with self.mounted(bucket="") as root:
+            directory = root / self.bucket / "test" / album
+            directory.mkdir(parents=True)
+            (directory / track).write_bytes(b"unicode-file-content")
+            for _ in range(120):
+                if key in self.remaining(prefix):
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("Unicode filename was not written back to S3 within 12 seconds")
+            shutil.rmtree(root / self.bucket / "test")
+            self.assertFalse((root / self.bucket / "test").exists())
+        self.assertEqual(
+            self.remaining("test/"), [],
+            "Unicode file or directory markers survived recursive deletion",
+        )
+        with self.mounted(bucket="") as root:
+            self.assertFalse((root / self.bucket / "test").exists())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

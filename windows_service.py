@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from cache_ops import ensure_cache_idle, ensure_uploads_idle, erase_cache_directory
+from network_drive import network_volume_name
 
 SERVICE_PREFIX = "S3Drive-"
 SERVICE_STOPPED = 1
@@ -163,6 +164,9 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
     return windows_command_line([
         str(rclone), "mount", "s3drive_mount:" + profile.bucket,
         profile.drive, "--config", str(config), "--vfs-cache-mode", "writes",
+        # Prevent MSI installers from using the S3 account root for temporary
+        # directories. UNC name is stable and different for each service.
+        "--network-mode", "--volname", network_volume_name(profile.id),
         # Refresh S3 directory listings instead of trusting stale VFS entries
         # during recursive deletes (same policy as ordinary user mounts).
         "--dir-cache-time", "0s",

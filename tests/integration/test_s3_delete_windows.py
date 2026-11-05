@@ -175,6 +175,21 @@ class WindowsS3DeletionTests(unittest.TestCase):
                     time.sleep(0.1)
                 print(f"Mount trace: {log_path}", flush=True)
 
+    def test_00_windows_recognizes_both_mounts_as_network_drives(self):
+        """WinFsp must not present S3 as a local fixed disk to Windows Installer."""
+        import ctypes
+
+        DRIVE_REMOTE = 4
+        for bucket in (self.bucket, ""):
+            with self.subTest(bucket=bucket):
+                with self.mounted(bucket=bucket):
+                    drive_type = ctypes.windll.kernel32.GetDriveTypeW(self.drive + "\\")
+                    self.assertEqual(
+                        drive_type, DRIVE_REMOTE,
+                        "Windows sees S3Drive as local; MSI*.tmp directories may "
+                        "be created as S3 buckets",
+                    )
+
     def test_01_delete_nested_tree_in_named_bucket(self):
         """Remove a full nested tree; backend must contain zero matching keys."""
         self.seed("remove/album1/cover.jpg",
@@ -300,6 +315,40 @@ class WindowsS3DeletionTests(unittest.TestCase):
         with self.mounted(bucket="") as root:
             self.assertFalse((root / self.bucket / "empty").exists(),
                              "Empty S3 folders reappeared after remount")
+
+
+    def test_07_delete_entire_disposable_bucket_from_account_root(self):
+        """Deleting a top-level Explorer folder must remove the S3 bucket too.
+
+        A bucket is not just a folder prefix. Validate with direct ListBuckets,
+        then remount; visually disappearing from Explorer is insufficient.
+        """
+        self.seed("album/tracks/01.flac", "album/cover.jpg")
+        for key in ("album/", "album/tracks/"):
+            self.s3.put_object(Bucket=self.bucket, Key=key, Body=b"")
+        with self.mounted(bucket="") as root:
+            target = root / self.bucket
+            self.assertTrue(target.is_dir())
+            shutil.rmtree(target)
+            visible_after_delete = target.exists()
+        buckets = {item["Name"] for item in self.s3.list_buckets()["Buckets"]}
+        print("bucket delete: visible immediately =", visible_after_delete,
+              "present in S3 API =", self.bucket in buckets, flush=True)
+        if self.bucket in buckets:
+            print("bucket delete survivors:", self.remaining(""), flush=True)
+            logs = list(self.folder.glob("rclone-*.log"))
+            if logs:
+                recent = max(logs, key=lambda item: item.stat().st_mtime)
+                events = [line for line in recent.read_text(encoding="utf-8", errors="replace").splitlines()
+                          if any(word in line.lower() for word in
+                                 ("rmdir", "remove", "delete", "bucket", "marker", "error"))]
+                print("bucket delete rclone debug:", "\\n".join(events[-55:]), flush=True)
+        self.assertNotIn(self.bucket, buckets,
+                         "Explorer removed the bucket directory but S3 retained it")
+        with self.mounted(bucket="") as root:
+            self.assertFalse((root / self.bucket).exists(),
+                             "Deleted S3 bucket reappeared after remount")
+        self.assertFalse(visible_after_delete, "Bucket stayed visible before remount")
 
 
 if __name__ == "__main__":

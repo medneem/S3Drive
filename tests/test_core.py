@@ -167,7 +167,7 @@ class MountTests(unittest.TestCase):
         self.assertIn("--option", args)
         label_index = args.index("--option")
         self.assertEqual(args[label_index + 1], "volname=Личный сетевой диск")
-        self.assertNotIn("--volname", args)
+        self.assertIn("--volname", args)
         self.assertNotIn("S3Drive - ", args[label_index + 1])
         self.assertGreater(len(args[label_index + 1].encode("utf-8")), 32)
 

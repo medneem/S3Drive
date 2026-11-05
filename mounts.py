@@ -44,6 +44,10 @@ def mount_command(profile: Profile, executable: str, cache_dir: Path, port: int)
     return [
         executable, "mount", f"{REMOTE}:{profile.bucket}", profile.drive,
         "--vfs-cache-mode", "writes",
+        # Start upload as soon as the local writer closes a file. This reduces
+        # the race window with deletion by another S3 client, but cannot
+        # prevent an external DeleteBucket while an upload is in progress.
+        "--vfs-write-back", "0s",
         # Present as network storage: Windows Installer otherwise prefers the
         # huge apparent free space of an S3 fixed disk for MSI*.tmp folders.
         "--network-mode", "--volname", network_volume_name(profile.id),

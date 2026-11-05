@@ -164,6 +164,7 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
     return windows_command_line([
         str(rclone), "mount", "s3drive_mount:" + profile.bucket,
         profile.drive, "--config", str(config), "--vfs-cache-mode", "writes",
+        "--vfs-write-back", "0s",
         # Prevent MSI installers from using the S3 account root for temporary
         # directories. UNC name is stable and different for each service.
         "--network-mode", "--volname", network_volume_name(profile.id),
@@ -305,7 +306,36 @@ def ensure_vfs_idle(control: dict) -> None:
     try:
         ensure_uploads_idle(stats)
     except RuntimeError as exc:
-        raise RuntimeError("Нельзя остановить службу: " + str(exc)) from exc
+        # The service runs as LocalSystem. Its authenticated RC server is
+        # queried only by the elevated admin helper; the GUI never receives
+        # the RC password. Decode JSON as UTF-8, not as PowerShell 5.1's
+        # default response code page (which produces mojibake such as "â").
+        details = ""
+        try:
+            queued = _control_request(
+                control["port"], control["password"], "vfs/queue"
+            ).get("queue", [])
+            if isinstance(queued, list):
+                names = [
+                    item["name"] for item in queued
+                    if isinstance(item, dict) and isinstance(item.get("name"), str)
+                ]
+                if names:
+                    shown = [name[:180] + ("…" if len(name) > 180 else "")
+                             for name in names[:5]]
+                    details = "\nОжидают отправки:\n" + "\n".join(shown)
+                    if len(names) > len(shown):
+                        details += f"\n… и ещё {len(names) - len(shown)}."
+        except (OSError, ValueError, TypeError, KeyError, TimeoutError):
+            # Failing to read the queue must never allow an unsafe stop.
+            pass
+        raise RuntimeError(
+            "Нельзя остановить службу: " + str(exc)
+            + details
+            + "\nНе удаляйте кэш и не останавливайте службу принудительно. "
+              "Проверьте существование бакета и журнал rclone: "
+              "незагруженные файлы могут остаться только в VFS-кэше."
+        ) from exc
 
 
 def install_and_start(profile, source_rclone: Path) -> None:

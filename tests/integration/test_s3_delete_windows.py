@@ -330,13 +330,16 @@ class WindowsS3DeletionTests(unittest.TestCase):
             target = root / self.bucket
             self.assertTrue(target.is_dir())
             shutil.rmtree(target)
-            self.assertFalse(target.exists())
+            visible_after_delete = target.exists()
         buckets = {item["Name"] for item in self.s3.list_buckets()["Buckets"]}
+        print("bucket delete: visible immediately =", visible_after_delete,
+              "present in S3 API =", self.bucket in buckets, flush=True)
         self.assertNotIn(self.bucket, buckets,
                          "Explorer removed the bucket directory but S3 retained it")
         with self.mounted(bucket="") as root:
             self.assertFalse((root / self.bucket).exists(),
                              "Deleted S3 bucket reappeared after remount")
+        self.assertFalse(visible_after_delete, "Bucket stayed visible before remount")
 
 
 if __name__ == "__main__":

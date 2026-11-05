@@ -382,6 +382,9 @@ class MainWindow(QMainWindow):
             return
         self.update_button.setEnabled(False)
         self.update_button.setText("Загрузка…")
+        self.statusBar().showMessage(
+            f"Скачивание и проверка S3Drive v{self.available_release.version}…"
+        )
         task = _ReleaseDownloadTask(self.available_release)
         task.signals.downloaded.connect(self.on_release_downloaded)
         self.update_pool.start(task)

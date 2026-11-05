@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 from profiles import Profile, app_data_dir
 from background import BackgroundRecord, BackgroundRegistry
 from cache_ops import ensure_cache_idle, ensure_uploads_idle, erase_cache_directory
+from network_drive import network_volume_name
 
 REMOTE = "s3drive_mount"
 
@@ -43,6 +44,9 @@ def mount_command(profile: Profile, executable: str, cache_dir: Path, port: int)
     return [
         executable, "mount", f"{REMOTE}:{profile.bucket}", profile.drive,
         "--vfs-cache-mode", "writes",
+        # Present as network storage: Windows Installer otherwise prefers the
+        # huge apparent free space of an S3 fixed disk for MSI*.tmp folders.
+        "--network-mode", "--volname", network_volume_name(profile.id),
         # S3 has no reliable directory-change notifications. The rclone VFS
         # listing cache can hide objects added by another S3 client, making
         # recursive deletion appear successful although keys remain on S3.

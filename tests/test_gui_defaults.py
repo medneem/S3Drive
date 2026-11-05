@@ -61,7 +61,11 @@ class NewProfileDefaultsTests(unittest.TestCase):
         source = inspect.getsource(desktop.MainWindow)
         self.assertNotIn("QSystemTrayIcon", source)
         self.assertNotIn("self.tray", source)
-        self.assertNotIn("setQuitOnLastWindowClosed(False)", source)
+        self.assertNotIn("setQuitOnLastWindowClosed(False)", inspect.getsource(desktop.MainWindow.closeEvent))
+        # A user-requested update temporarily suppresses GUI quit only while
+        # staging the external updater; the ordinary close path is unchanged.
+        self.assertIn("setQuitOnLastWindowClosed(False)", inspect.getsource(desktop.MainWindow.on_release_downloaded))
+        self.assertIn("setQuitOnLastWindowClosed(True)", inspect.getsource(desktop.MainWindow.on_release_downloaded))
         self.assertNotIn("self.hide()", inspect.getsource(desktop.MainWindow.closeEvent))
         self.assertIn("self.hide_transfer_popup()", inspect.getsource(desktop.MainWindow.closeEvent))
 

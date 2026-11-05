@@ -29,6 +29,8 @@ from single_instance import SingleInstance
 from mounts import MountManager
 from profiles import Profile, ProfileStore, app_data_dir, config_path
 from version import APP_VERSION
+from auto_update import (UpdateInfo, StagedUpdate, check_latest_release,
+                         stage_update, discard_update, launch_updater)
 from transfer_monitor import read_user_snapshot, read_service_snapshot, TransferSnapshot
 from legacy_startup import remove_legacy_tray_autostart
 
@@ -69,6 +71,41 @@ class _MonitorTask(QRunnable):
             self.signals.finished.emit(self.profile.id, state, "")
         except Exception as exc:
             self.signals.finished.emit(self.profile.id, None, str(exc))
+
+
+
+class _UpdateSignals(QObject):
+    checked = Signal(object, str)
+    downloaded = Signal(object, str)
+
+
+class _ReleaseCheckTask(QRunnable):
+    """Check release metadata on startup without blocking the GUI."""
+
+    def __init__(self):
+        super().__init__()
+        self.signals = _UpdateSignals()
+
+    def run(self):
+        try:
+            self.signals.checked.emit(check_latest_release(APP_VERSION), "")
+        except Exception as exc:
+            self.signals.checked.emit(None, str(exc))
+
+
+class _ReleaseDownloadTask(QRunnable):
+    """Download only after the user explicitly clicks the Update button."""
+
+    def __init__(self, release: UpdateInfo):
+        super().__init__()
+        self.release = release
+        self.signals = _UpdateSignals()
+
+    def run(self):
+        try:
+            self.signals.downloaded.emit(stage_update(self.release), "")
+        except Exception as exc:
+            self.signals.downloaded.emit(None, str(exc))
 
 
 class TransferWindow(QDialog):
@@ -185,6 +222,11 @@ class MainWindow(QMainWindow):
         title.setStyleSheet("font-size: 18px; font-weight: 600;")
         header.addWidget(title, 1)
         header.addWidget(QLabel(f"v{APP_VERSION}"))
+        self.update_button = QPushButton("Обновить")
+        self.update_button.setVisible(False)
+        self.update_button.setEnabled(False)
+        self.update_button.clicked.connect(self.start_release_update)
+        header.addWidget(self.update_button)
         layout.addLayout(header)
 
         columns = QHBoxLayout()
@@ -308,6 +350,97 @@ class MainWindow(QMainWindow):
         self.monitor_timer.timeout.connect(self.poll_transfers)
         self.monitor_timer.start(1500)
         self.statusBar().showMessage(f"Конфигурация: {config_path()} | Кэш и журналы: {app_data_dir()}")
+        self.available_release: UpdateInfo | None = None
+        self.update_pool = QThreadPool(self)
+        self.update_pool.setMaxThreadCount(1)
+        # Startup checks metadata only. No release file is downloaded without a click.
+        QTimer.singleShot(0, self.check_release_on_startup)
+
+    def check_release_on_startup(self) -> None:
+        """Show Update only when a newer stable GitHub Release is available."""
+        if not getattr(sys, "frozen", False):
+            return
+        task = _ReleaseCheckTask()
+        task.signals.checked.connect(self.on_release_checked)
+        self.update_pool.start(task)
+
+    def on_release_checked(self, release: UpdateInfo | None, error: str) -> None:
+        # Network failures must never prevent normal offline use of S3Drive.
+        if error or release is None:
+            return
+        self.available_release = release
+        self.update_button.setToolTip(f"Доступна S3Drive v{release.version}")
+        self.update_button.setEnabled(True)
+        self.update_button.setVisible(True)
+        self.statusBar().showMessage(
+            f"Доступна новая версия S3Drive v{release.version}. Нажмите «Обновить»."
+        )
+
+    def start_release_update(self) -> None:
+        """User-requested download, never triggered automatically."""
+        if self.available_release is None or not self.update_button.isEnabled():
+            return
+        self.update_button.setEnabled(False)
+        self.update_button.setText("Загрузка…")
+        self.statusBar().showMessage(
+            f"Скачивание и проверка S3Drive v{self.available_release.version}…"
+        )
+        task = _ReleaseDownloadTask(self.available_release)
+        task.signals.downloaded.connect(self.on_release_downloaded)
+        self.update_pool.start(task)
+
+    def on_release_downloaded(self, staged: StagedUpdate | None, error: str) -> None:
+        """Close normally, then let a separate updater replace the executable."""
+        self.update_button.setText("Обновить")
+        if error or staged is None:
+            self.update_button.setEnabled(True)
+            QMessageBox.warning(
+                self, "Не удалось скачать обновление",
+                error or "Не удалось проверить загруженный архив."
+            )
+            return
+
+        # A user background rclone process may still use rclone.exe in the
+        # portable directory. Never stop it forcibly or discard VFS writes.
+        background = [
+            p.drive for p in self.profiles
+            if p.keep_running and self.mounts.is_mounted(p.id)
+        ]
+        if background:
+            discard_update(staged)
+            self.update_button.setEnabled(True)
+            QMessageBox.warning(
+                self, "Обновление отложено",
+                "Сначала безопасно отключите фоновые диски "
+                + ", ".join(background)
+                + " после завершения загрузки в S3. Службы Windows не затронуты."
+            )
+            return
+
+        application = QApplication.instance()
+        if application is not None:
+            application.setQuitOnLastWindowClosed(False)
+        accepted = self.close()  # Existing closeEvent enforces VFS upload checks.
+        if not accepted:
+            if application is not None:
+                application.setQuitOnLastWindowClosed(True)
+            discard_update(staged)
+            self.update_button.setEnabled(True)
+            return
+        try:
+            launch_updater(
+                staged, Path(sys.executable).resolve().parent, parent_pid=os.getpid()
+            )
+        except Exception as exc:
+            discard_update(staged)
+            self.show()
+            if application is not None:
+                application.setQuitOnLastWindowClosed(True)
+            self.update_button.setEnabled(True)
+            QMessageBox.warning(self, "Не удалось запустить обновление", str(exc))
+            return
+        if application is not None:
+            application.quit()
 
     def selected_id(self) -> str | None:
         item = self.items.currentItem()

@@ -1,10 +1,12 @@
-# Bundled third-party dependencies pinned to official releases and SHA256 digests.
+# Bundled third-party dependencies pinned to exact official builds and SHA256 digests.
+# rclone beta is temporary: stable v1.75.2 cannot delete account-root buckets
+# with --s3-directory-markers (DeleteObject with an empty Key).
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$rcloneVersion = "1.75.2"
+$rcloneVersion = "1.76.0-beta.10713.5c143c89b"
 $rcloneZipName = "rclone-v$rcloneVersion-windows-amd64.zip"
-$rcloneExpectedSha256 = "8A9DB2BAD1DC79A65B3348FD857069598E2AAB7CF4D118B77B1DF23055AFF818"
+$rcloneExpectedSha256 = "8A77D59BFDA59B4B9ADD7CDDB6D74516EACC01975E7B6D29DBD14818E2EBE549"
 $winfspTag = "v2.2B4"
 $winfspInstallerName = "winfsp-2.2.26215.msi"
 $winfspExpectedSha256 = "2ECB5C89405488A95BBD8A01875E02C48534FD37BBDFD84488F7590464D65944"
@@ -29,7 +31,7 @@ function Download-And-Verify([string]$url, [string]$target, [string]$expected) {
 }
 
 Download-And-Verify `
-    "https://github.com/rclone/rclone/releases/download/v$rcloneVersion/$rcloneZipName" `
+    "https://beta.rclone.org/v$rcloneVersion/$rcloneZipName" `
     $archive $rcloneExpectedSha256
 Download-And-Verify `
     "https://github.com/winfsp/winfsp/releases/download/$winfspTag/$winfspInstallerName" `
@@ -42,8 +44,11 @@ $rclone = Get-ChildItem -LiteralPath $extract -Filter "rclone.exe" -Recurse -Fil
     Select-Object -First 1
 if (-not $rclone) { throw "rclone.exe missing from verified ZIP" }
 Copy-Item -LiteralPath $rclone.FullName -Destination (Join-Path $tools "rclone.exe") -Force
-& (Join-Path $tools "rclone.exe") version
+$rcloneReportedVersion = & (Join-Path $tools "rclone.exe") version
 if ($LASTEXITCODE -ne 0) { throw "Bundled rclone.exe cannot start" }
+if ($rcloneReportedVersion[0] -notmatch [regex]::Escape($rcloneVersion)) {
+    throw "Unexpected bundled rclone version: $($rcloneReportedVersion[0])"
+}
 Remove-Item $archive -Force
 Remove-Item $extract -Recurse -Force
 Write-Host "Bundled dependencies: rclone $rcloneVersion and WinFsp $winfspTag"

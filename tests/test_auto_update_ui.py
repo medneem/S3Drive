@@ -55,6 +55,7 @@ class ManualUpdateButtonTests(unittest.TestCase):
             available_release=release(),
             update_button=Mock(),
             update_pool=Mock(),
+            statusBar=Mock(),
             on_release_downloaded=Mock(),
         )
         gui.update_button.isEnabled.return_value = True

@@ -164,6 +164,7 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
     return windows_command_line([
         str(rclone), "mount", "s3drive_mount:" + profile.bucket,
         profile.drive, "--config", str(config), "--vfs-cache-mode", "writes",
+        "--vfs-write-back", "0s",
         # Prevent MSI installers from using the S3 account root for temporary
         # directories. UNC name is stable and different for each service.
         "--network-mode", "--volname", network_volume_name(profile.id),

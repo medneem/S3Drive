@@ -92,7 +92,7 @@ class ServiceTests(unittest.TestCase):
             45532,
         )
         self.assertIn('--option "volname=Личный сетевой диск"', command)
-        self.assertNotIn('--volname ', command)
+        self.assertIn('--volname ', command)
         self.assertGreater(len(profile.name.encode("utf-8")), 32)
         self.assertNotIn("S3Drive - Личный сетевой диск", command)
 

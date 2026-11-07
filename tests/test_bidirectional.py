@@ -215,7 +215,8 @@ class TransferDialogTests(unittest.TestCase):
             self.assertIn("На S3: 1", ui.summary.setText.call_args.args[0])
         finally:
             set_language("en")
-        ui.overall_progress.setValue.assert_called_once_with(30)
+        self.assertEqual(ui.overall_progress.setValue.call_count, 2)
+        ui.overall_progress.setValue.assert_called_with(30)
 
     def test_vfs_upload_still_triggers_own_window(self):
         from types import SimpleNamespace

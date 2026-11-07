@@ -167,7 +167,7 @@ class TransferDialogTests(unittest.TestCase):
         dialog.assert_not_called()
         ui.hide_transfer_popup.assert_called_once_with()
         self.assertNotIn(profile.id, ui.uploads_seen)
-        self.assertIn("загрузка", ui.statusBar.return_value.showMessage.call_args.args[0].lower())
+        self.assertIn("uploads completed", ui.statusBar.return_value.showMessage.call_args.args[0].lower())
 
     def test_only_ambiguous_service_transfer_does_not_open_window(self):
         from types import SimpleNamespace
@@ -206,8 +206,15 @@ class TransferDialogTests(unittest.TestCase):
         TransferWindow.display(ui, state)
         ui.table.setRowCount.assert_called_once_with(1)
         self.assertEqual(ui.table.setItem.call_count, 5)
-        self.assertIn("На S3: 1", ui.summary.setText.call_args.args[0])
-        self.assertNotIn("С S3:", ui.summary.setText.call_args.args[0])
+        self.assertIn("Uploading: 1", ui.summary.setText.call_args.args[0])
+        self.assertNotIn("Downloading:", ui.summary.setText.call_args.args[0])
+        from localization import set_language
+        set_language("ru")
+        try:
+            TransferWindow.display(ui, state)
+            self.assertIn("На S3: 1", ui.summary.setText.call_args.args[0])
+        finally:
+            set_language("en")
         ui.overall_progress.setValue.assert_called_once_with(30)
 
     def test_vfs_upload_still_triggers_own_window(self):

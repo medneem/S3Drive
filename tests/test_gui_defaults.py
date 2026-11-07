@@ -18,7 +18,7 @@ class NewProfileDefaultsTests(unittest.TestCase):
     def test_new_profile_has_user_selected_defaults(self):
         gui = stub_window()
         MainWindow.new_profile(gui)
-        gui.name.setText.assert_called_once_with("Личный сетевой диск")
+        gui.name.setText.assert_called_once_with("Personal network drive")
         gui.path_style.setChecked.assert_called_once_with(True)
         gui.shortcut_checkbox.setChecked.assert_called_once_with(True)
         gui.open_checkbox.setChecked.assert_called_once_with(False)
@@ -46,7 +46,7 @@ class NewProfileDefaultsTests(unittest.TestCase):
     def test_main_window_includes_cache_clear_button_and_transfer_monitor(self):
         import inspect
         source = inspect.getsource(MainWindow)
-        self.assertIn('QPushButton("Очистить кэш")', source)
+        self.assertIn('QPushButton(tr("Очистить кэш"))', source)
         self.assertIn('self.clear_cache_button.clicked.connect(self.clear_cache_profile)', source)
         self.assertIn('self.monitor_timer.timeout.connect(self.poll_transfers)', source)
         self.assertIn("class TransferWindow(QDialog)", inspect.getsource(__import__("main")))

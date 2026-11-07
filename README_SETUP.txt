@@ -1,3 +1,71 @@
+S3Drive — Getting started (Windows 10/11 x64)
+English guide. Russian guide: README_SETUP_RU.txt
+
+1. Extract the ENTIRE portable ZIP into one writable folder. Do not run
+   S3Drive directly from the ZIP.
+2. Run S3Drive.exe as a normal user, NOT as administrator.
+3. S3Drive checks WinFsp automatically:
+   - If the driver is missing, approve installation of the bundled
+     winfsp-2.2.26215.msi and Windows UAC.
+   - Complete installation, then start S3Drive.exe again.
+   - Without WinFsp, Windows drives cannot be mounted.
+4. Create a connection with Endpoint, Access Key, Secret Key, drive letter,
+   optional bucket, and Path-style mode (for QNAP/MinIO as needed).
+   If the bucket is blank, accessible S3 buckets appear as root folders,
+   provided the credentials have ListBuckets permissions.
+5. Optionally enable Create desktop shortcut and Open drive after connecting.
+6. Click Save to create config.json beside S3Drive.exe.
+7. Optionally enable background mode or Run as Windows service.
+8. Click Connect; wait until the drive appears in Windows Explorer.
+9. To choose Russian: Settings -> Interface language -> Русский -> Save.
+   The selected language persists in config.json. English is the default.
+
+BACKGROUND MODE
+A regular user background mount can stay active after closing S3Drive.
+It does not auto-reconnect after Windows reboot. No tray icon or S3 upload
+monitor remains visible while the GUI is closed. Disconnect safely from
+S3Drive before replacing files that the background mount may be using.
+
+WINDOWS SERVICE MODE
+Use Run as Windows service, click Save, then Connect and approve UAC.
+The LocalSystem service starts with Windows; the drive remains available
+even when the GUI is closed. Stop it with Stop service and drive. Once it
+is stopped, Remove service keeps the saved connection profile intact.
+An app update does not automatically replace a running service's
+rclone.exe or configuration. Wait for uploads before reconnecting.
+Service-mounted drives may be accessible to other local Windows users.
+
+SECURITY AND CONFIGURATION
+Access and secret keys are encrypted using Windows DPAPI in config.json.
+Keep the file private. The app directory must allow writing config.json.
+
+UPDATES
+At launch, S3Drive checks for new stable GitHub Releases in the background.
+Nothing downloads automatically; click Update when offered.
+S3Drive verifies the downloaded archive before using S3DriveUpdater.exe
+to replace application files. Config, services, and VFS caches are preserved.
+Active user background mounts can postpone an update until safe disconnect.
+Old versions without the updater must be updated manually with the full ZIP.
+
+CAUTION — S3 IS NOT NTFS
+Close changed files and wait for S3 uploads before disconnecting.
+Do not manually remove the VFS cache if writes may still be pending.
+A first-level folder in S3 account-root mode represents a real bucket.
+Deleting it may delete that bucket if permissions allow.
+Avoid placing live databases or active Git repositories on S3 drives.
+
+rclone.exe is already included. WinFsp 2026 Beta4 (v2.2B4) is a beta
+driver; monitor later WinFsp security and stability updates.
+A second S3Drive GUI instance in the same session is blocked.
+
+Source: https://github.com/medneem/S3Drive
+Licenses: LICENSE, THIRD_PARTY_NOTICES.md, RCLONE_LICENSE.txt
+
+
+------------------------------------------------------------
+РУССКИЙ / RUSSIAN
+------------------------------------------------------------
+
 S3Drive — первоначальная установка (Windows 10/11 x64)
 
 1. Распакуйте ВСЁ содержимое архива в одну папку. Не запускайте из ZIP.

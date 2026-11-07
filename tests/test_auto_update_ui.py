@@ -21,7 +21,7 @@ def release() -> UpdateInfo:
 class ManualUpdateButtonTests(unittest.TestCase):
     def test_hidden_initially_with_no_unprompted_download(self):
         source = inspect.getsource(MainWindow.__init__)
-        self.assertIn('QPushButton("Обновить")', source)
+        self.assertIn('QPushButton(tr("Обновить"))', source)
         self.assertIn("self.update_button.setVisible(False)", source)
         self.assertIn("self.update_button.clicked.connect(self.start_release_update)", source)
         self.assertNotIn("stage_update(", source)
@@ -66,7 +66,7 @@ class ManualUpdateButtonTests(unittest.TestCase):
             self.assertEqual(worker.release.version, "1.3.0")
             download.assert_not_called()  # Worker queued, not run implicitly.
         gui.update_button.setEnabled.assert_called_once_with(False)
-        gui.update_button.setText.assert_called_once_with("Загрузка…")
+        gui.update_button.setText.assert_called_once_with("Downloading…")
 
     def test_cancelled_close_never_starts_updater(self):
         from auto_update import StagedUpdate

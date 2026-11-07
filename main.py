@@ -1,4 +1,4 @@
-"""Russian-language Windows GUI for managing S3 mounts through rclone and WinFsp."""
+"""Bilingual Windows GUI for managing S3 mounts through rclone and WinFsp."""
 from __future__ import annotations
 
 import os
@@ -12,7 +12,7 @@ from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout,
-    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
+    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox as QtMessageBox,
     QPushButton, QProgressBar, QVBoxLayout, QWidget,
     QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView,
 )
@@ -33,6 +33,27 @@ from auto_update import (UpdateInfo, StagedUpdate, check_latest_release,
                          stage_update, discard_update, launch_updater)
 from transfer_monitor import read_user_snapshot, read_service_snapshot, TransferSnapshot
 from legacy_startup import remove_legacy_tray_autostart
+from localization import tr, set_language, get_language, read_language
+
+
+class QMessageBox(QtMessageBox):
+    """Translate all modal dialogs, including the existing warning paths."""
+
+    @staticmethod
+    def critical(parent, title, message, *args):
+        return QtMessageBox.critical(parent, tr(title), tr(message), *args)
+
+    @staticmethod
+    def warning(parent, title, message, *args):
+        return QtMessageBox.warning(parent, tr(title), tr(message), *args)
+
+    @staticmethod
+    def information(parent, title, message, *args):
+        return QtMessageBox.information(parent, tr(title), tr(message), *args)
+
+    @staticmethod
+    def question(parent, title, message, *args):
+        return QtMessageBox.question(parent, tr(title), tr(message), *args)
 
 
 def app_icon() -> QIcon:
@@ -116,13 +137,16 @@ class TransferWindow(QDialog):
     def __init__(self, profile: Profile, parent: QWidget | None = None):
         super().__init__(parent)
         self.profile_id = profile.id
-        self.setWindowTitle(f"Загрузка на S3 — {profile.name} ({profile.drive})")
+        self.profile_name = profile.name
+        self.profile_drive = profile.drive
+        self.last_snapshot = None
+        self.setWindowTitle(tr("Загрузка на S3 — {name} ({drive})", name=profile.name, drive=profile.drive))
         self.setWindowFlag(Qt.WindowType.Tool, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.resize(740, 330)
         self.setMinimumWidth(580)
         layout = QVBoxLayout(self)
-        self.summary = QLabel("Мониторинг отправки на S3…")
+        self.summary = QLabel(tr("Мониторинг отправки на S3…"))
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
         self.overall_progress = QProgressBar()
@@ -130,7 +154,7 @@ class TransferWindow(QDialog):
         layout.addWidget(self.overall_progress)
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels([
-            "Направление", "Имя файла", "Прогресс", "Скорость", "Осталось",
+            tr("Направление"), tr("Имя файла"), tr("Прогресс"), tr("Скорость"), tr("Осталось"),
         ])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -143,32 +167,42 @@ class TransferWindow(QDialog):
         self.table.setColumnWidth(4, 100)
         layout.addWidget(self.table)
 
+    def retranslate_ui(self):
+        self.setWindowTitle(tr("Загрузка на S3 — {name} ({drive})", name=self.profile_name, drive=self.profile_drive))
+        self.table.setHorizontalHeaderLabels([
+            tr("Направление"), tr("Имя файла"), tr("Прогресс"), tr("Скорость"), tr("Осталось"),
+        ])
+        self.summary.setText(tr("Мониторинг отправки на S3…"))
+        if self.last_snapshot is not None:
+            self.display(self.last_snapshot)
+
     def display(self, snapshot: TransferSnapshot):
+        self.last_snapshot = snapshot
         labels = {
-            "upload": "↑ На S3",
-            "queued": "⌛ В очереди",
+            "upload": tr("↑ На S3"),
+            "queued": tr("⌛ В очереди"),
         }
         # Windows already displays its own download progress dialog.
         # Never show incoming downloads or unclassified RC transfers here.
         items = tuple(item for item in snapshot.transfers
                       if item.direction in ("upload", "queued"))
         self.summary.setText(
-            f"На S3: {snapshot.uploading}   |   "
-            f"В очереди: {snapshot.queued}"
-            + (f"   |   Ошибки: {snapshot.errors}" if snapshot.errors else "")
+            tr("На S3: {count}   |   В очереди: {queued}", count=snapshot.uploading, queued=snapshot.queued)
+            + (tr("   |   Ошибки: {count}", count=snapshot.errors) if snapshot.errors else "")
         )
         self.table.setRowCount(len(items))
         for row, item in enumerate(items):
             percent = f"{item.percent}%"
             if item.size:
                 percent += (f" ({item.bytes_done / 1048576:.1f}/"
-                            f"{item.size / 1048576:.1f} МиБ)")
+                            f"{item.size / 1048576:.1f} {tr('МиБ')})")
             values = (
                 labels[item.direction],
                 item.name,
-                percent if item.direction != "queued" else "Ожидает",
-                f"{item.speed / 1048576:.2f} МиБ/с" if item.speed else "—",
-                f"{int(item.eta)} с" if item.eta is not None else "—",
+                percent if item.direction != "queued" else tr("Ожидает"),
+                f"{item.speed / 1048576:.2f} {tr('МиБ/с')}" if item.speed else "—",
+                f"{int(item.eta)} s" if item.eta is not None and get_language() == "en"
+                else f"{int(item.eta)} с" if item.eta is not None else "—",
             )
             for col, value in enumerate(values):
                 cell = QTableWidgetItem(value)
@@ -198,35 +232,39 @@ class MainWindow(QMainWindow):
         self.settings_load_error = False
         try:
             self.profiles = self.store.load()
+            set_language(self.store.language)
         except Exception as exc:
             self.settings_load_error = True
             self.profiles = []
             QMessageBox.critical(self, "Не удалось открыть config.json",
-                f"{exc}\n\nЧтобы избежать потери профилей, сохранение настроек заблокировано. "
-                "Исправьте файл config.json и перезапустите S3Drive.")
+                f"{exc}\n\n" + tr("Чтобы избежать потери профилей, сохранение настроек заблокировано. "
+                "Исправьте файл config.json и перезапустите S3Drive."))
 
         try:
             self.mounts.recover(self.profiles)
         except Exception as exc:
             QMessageBox.warning(
                 self, "Фоновые подключения",
-                f"Не удалось восстановить управление фоновыми дисками: {exc}\n"
-                "Существующие диски не отключены. Проверьте состояние перед подключением.",
+                tr("Не удалось восстановить управление фоновыми дисками: {error}\n"
+                "Существующие диски не отключены. Проверьте состояние перед подключением.", error=exc),
             )
 
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
         header = QHBoxLayout()
-        title = QLabel("S3Drive — подключение S3 как диска Windows")
-        title.setStyleSheet("font-size: 18px; font-weight: 600;")
-        header.addWidget(title, 1)
+        self.header_title = QLabel(tr("S3Drive — подключение S3 как диска Windows"))
+        self.header_title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        header.addWidget(self.header_title, 1)
         header.addWidget(QLabel(f"v{APP_VERSION}"))
-        self.update_button = QPushButton("Обновить")
+        self.update_button = QPushButton(tr("Обновить"))
         self.update_button.setVisible(False)
         self.update_button.setEnabled(False)
         self.update_button.clicked.connect(self.start_release_update)
         header.addWidget(self.update_button)
+        self.settings_button = QPushButton(tr("Настройки"))
+        self.settings_button.clicked.connect(self.open_settings)
+        header.addWidget(self.settings_button)
         layout.addLayout(header)
 
         columns = QHBoxLayout()
@@ -236,19 +274,20 @@ class MainWindow(QMainWindow):
         columns.addWidget(self.items, 2)
 
         right = QVBoxLayout()
-        group = QGroupBox("Параметры S3")
-        fields = QFormLayout(group)
+        self.s3_group = QGroupBox(tr("Параметры S3"))
+        fields = QFormLayout(self.s3_group)
+        self.fields = fields
         self.name = QLineEdit()
         self.name.setPlaceholderText("QNAP S3")
         self.endpoint = QLineEdit()
         self.endpoint.setPlaceholderText("http://nas.local:8010")
         self.bucket = QLineEdit()
-        self.bucket.setPlaceholderText("Пусто — показать все доступные бакеты")
-        self.bucket.setToolTip(
+        self.bucket.setPlaceholderText(tr("Пусто — показать все доступные бакеты"))
+        self.bucket.setToolTip(tr(
             "Необязательно. Без имени бакета монтируется корень S3: "
             "в Проводнике отображаются доступные бакеты как папки. "
             "Ключи должны разрешать ListBuckets."
-        )
+        ))
         self.access = QLineEdit()
         self.access.setEchoMode(QLineEdit.EchoMode.Password)
         self.secret = QLineEdit()
@@ -256,31 +295,32 @@ class MainWindow(QMainWindow):
         self.drive = QComboBox()
         self.drive.addItems([f"{chr(n)}:" for n in range(ord("D"), ord("Z") + 1)])
         self.drive.setCurrentText("S:")
-        self.path_style = QCheckBox("Path-Style (для QNAP / MinIO)")
+        self.path_style = QCheckBox(tr("Path-Style (для QNAP / MinIO)"))
         self.path_style.setChecked(True)
         self.region = QLineEdit("us-east-1")
-        for label, widget in (
+        self.field_labels = (
             ("Название:", self.name), ("Endpoint:", self.endpoint), ("Бакет (необязательно):", self.bucket),
             ("Access Key:", self.access), ("Secret Key:", self.secret),
             ("Буква диска:", self.drive), ("Регион:", self.region),
-        ):
-            fields.addRow(label, widget)
+        )
+        for label, widget in self.field_labels:
+            fields.addRow(tr(label), widget)
         fields.addRow("", self.path_style)
-        self.shortcut_checkbox = QCheckBox("Создать ярлык на рабочем столе")
-        self.open_checkbox = QCheckBox("Открыть диск после подключения")
+        self.shortcut_checkbox = QCheckBox(tr("Создать ярлык на рабочем столе"))
+        self.open_checkbox = QCheckBox(tr("Открыть диск после подключения"))
         fields.addRow("", self.shortcut_checkbox)
         fields.addRow("", self.open_checkbox)
-        self.background_checkbox = QCheckBox("Оставлять диск подключённым после закрытия программы")
-        self.background_checkbox.setToolTip(
+        self.background_checkbox = QCheckBox(tr("Оставлять диск подключённым после закрытия программы"))
+        self.background_checkbox.setToolTip(tr(
             "rclone продолжит работать от вашего имени в фоне. "
             "Это не служба Windows, и после перезагрузки автоподключения пока нет."
-        )
+        ))
         fields.addRow("", self.background_checkbox)
-        self.service_checkbox = QCheckBox("Запускать как службу Windows (доступно в Проводнике)")
-        self.service_checkbox.setToolTip(
+        self.service_checkbox = QCheckBox(tr("Запускать как службу Windows (доступно в Проводнике)"))
+        self.service_checkbox.setToolTip(tr(
             "Реальная служба LocalSystem с автозапуском Windows. "
             "Установка и остановка службы требуют подтверждения UAC."
-        )
+        ))
         fields.addRow("", self.service_checkbox)
         self.service_checkbox.toggled.connect(
             lambda checked: self.background_checkbox.setChecked(False) if checked else None
@@ -288,27 +328,27 @@ class MainWindow(QMainWindow):
         self.background_checkbox.toggled.connect(
             lambda checked: self.service_checkbox.setChecked(False) if checked else None
         )
-        right.addWidget(group, 1)
+        right.addWidget(self.s3_group, 1)
 
-        self.status = QLabel("Выберите профиль или создайте новый.")
+        self.status = QLabel(tr("Выберите профиль или создайте новый."))
         self.status.setWordWrap(True)
         right.addWidget(self.status)
         columns.addLayout(right, 4)
         layout.addLayout(columns, 1)
 
         actions = QHBoxLayout()
-        self.add_button = QPushButton("Новый")
-        self.save_button = QPushButton("Сохранить")
-        self.remove_button = QPushButton("Удалить")
-        self.mount_button = QPushButton("Подключить")
-        self.unmount_button = QPushButton("Отключить")
-        self.remove_service_button = QPushButton("Удалить службу")
-        self.clear_cache_button = QPushButton("Очистить кэш")
-        self.clear_cache_button.setToolTip(
+        self.add_button = QPushButton(tr("Новый"))
+        self.save_button = QPushButton(tr("Сохранить"))
+        self.remove_button = QPushButton(tr("Удалить"))
+        self.mount_button = QPushButton(tr("Подключить"))
+        self.unmount_button = QPushButton(tr("Отключить"))
+        self.remove_service_button = QPushButton(tr("Удалить службу"))
+        self.clear_cache_button = QPushButton(tr("Очистить кэш"))
+        self.clear_cache_button.setToolTip(tr(
             "После подтверждения проверяет отсутствие незавершённых загрузок, "
             "отключает диск и очищает его локальный VFS-кэш. "
             "При незавершённых передачах или ошибках ничего не удаляет."
-        )
+        ))
         actions.addWidget(self.add_button)
         actions.addWidget(self.save_button)
         actions.addWidget(self.remove_button)
@@ -326,6 +366,7 @@ class MainWindow(QMainWindow):
         self.unmount_button.clicked.connect(self.unmount_profile)
         self.remove_service_button.clicked.connect(self.remove_service_profile)
         self.clear_cache_button.clicked.connect(self.clear_cache_profile)
+        self.retranslate_ui()
         self.pending_mounts: dict[str, tuple[Profile, float]] = {}
         self.refresh_items()
         self.new_profile()
@@ -349,12 +390,108 @@ class MainWindow(QMainWindow):
         self.monitor_timer = QTimer(self)
         self.monitor_timer.timeout.connect(self.poll_transfers)
         self.monitor_timer.start(1500)
-        self.statusBar().showMessage(f"Конфигурация: {config_path()} | Кэш и журналы: {app_data_dir()}")
+        self.statusBar().showMessage(tr("Конфигурация: {config} | Кэш и журналы: {data}", config=config_path(), data=app_data_dir()))
         self.available_release: UpdateInfo | None = None
         self.update_pool = QThreadPool(self)
         self.update_pool.setMaxThreadCount(1)
         # Startup checks metadata only. No release file is downloaded without a click.
         QTimer.singleShot(0, self.check_release_on_startup)
+
+    def retranslate_ui(self) -> None:
+        """Update static widgets in-place; never interrupt a mounted drive."""
+        self.header_title.setText(tr("S3Drive — подключение S3 как диска Windows"))
+        self.settings_button.setText(tr("Настройки"))
+        self.update_button.setText(tr("Обновить"))
+        self.s3_group.setTitle(tr("Параметры S3"))
+        for label, widget in self.field_labels:
+            field_label = self.fields.labelForField(widget)
+            if field_label is not None:
+                field_label.setText(tr(label))
+        self.bucket.setPlaceholderText(tr("Пусто — показать все доступные бакеты"))
+        self.bucket.setToolTip(tr(
+            "Необязательно. Без имени бакета монтируется корень S3: "
+            "в Проводнике отображаются доступные бакеты как папки. "
+            "Ключи должны разрешать ListBuckets."
+        ))
+        self.path_style.setText(tr("Path-Style (для QNAP / MinIO)"))
+        self.shortcut_checkbox.setText(tr("Создать ярлык на рабочем столе"))
+        self.open_checkbox.setText(tr("Открыть диск после подключения"))
+        self.background_checkbox.setText(tr("Оставлять диск подключённым после закрытия программы"))
+        self.background_checkbox.setToolTip(tr(
+            "rclone продолжит работать от вашего имени в фоне. "
+            "Это не служба Windows, и после перезагрузки автоподключения пока нет."
+        ))
+        self.service_checkbox.setText(tr("Запускать как службу Windows (доступно в Проводнике)"))
+        self.service_checkbox.setToolTip(tr(
+            "Реальная служба LocalSystem с автозапуском Windows. "
+            "Установка и остановка службы требуют подтверждения UAC."
+        ))
+        for button, caption in (
+            (self.add_button, "Новый"),
+            (self.save_button, "Сохранить"),
+            (self.remove_button, "Удалить"),
+            (self.mount_button, "Подключить"),
+            (self.remove_service_button, "Удалить службу"),
+            (self.clear_cache_button, "Очистить кэш"),
+        ):
+            button.setText(tr(caption))
+        self.clear_cache_button.setToolTip(tr(
+            "После подтверждения проверяет отсутствие незавершённых загрузок, "
+            "отключает диск и очищает его локальный VFS-кэш. "
+            "При незавершённых передачах или ошибках ничего не удаляет."
+        ))
+        self.statusBar().showMessage(tr(
+            "Конфигурация: {config} | Кэш и журналы: {data}",
+            config=config_path(), data=app_data_dir(),
+        ))
+        self.unmount_button.setText(tr("Отключить"))
+        self.update_status()
+        if self.selected_profile() is None:
+            self.status.setText(tr("Новый профиль. Заполните поля и нажмите «Сохранить»."))
+
+    def open_settings(self) -> None:
+        """Save a portable language preference without changing S3 mounts."""
+        if self.settings_load_error:
+            QMessageBox.warning(self, "Ошибка config.json",
+                                "Сохранение заблокировано из-за ошибки чтения config.json. "
+                                "Исправьте конфигурацию и перезапустите программу.")
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle(tr("Настройки S3Drive"))
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        language = QComboBox()
+        language.addItem("English", "en")
+        language.addItem("Русский", "ru")
+        language.setCurrentIndex(language.findData(get_language()))
+        form.addRow(tr("Язык интерфейса:"), language)
+        layout.addLayout(form)
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        cancel = QPushButton(tr("Отмена"))
+        save = QPushButton(tr("Сохранить"))
+        buttons.addWidget(cancel)
+        buttons.addWidget(save)
+        cancel.clicked.connect(dialog.reject)
+        save.clicked.connect(dialog.accept)
+        layout.addLayout(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = language.currentData()
+        if selected == self.store.language:
+            return
+        previous = self.store.language
+        try:
+            self.store.language = selected
+            self.store.save(self.profiles)
+        except Exception as exc:
+            self.store.language = previous
+            QMessageBox.warning(self, "Не удалось сохранить язык интерфейса", str(exc))
+            return
+        set_language(selected)
+        self.retranslate_ui()
+        if self.transfer_popup is not None:
+            self.transfer_popup.retranslate_ui()
 
     def check_release_on_startup(self) -> None:
         """Show Update only when a newer stable GitHub Release is available."""
@@ -369,11 +506,11 @@ class MainWindow(QMainWindow):
         if error or release is None:
             return
         self.available_release = release
-        self.update_button.setToolTip(f"Доступна S3Drive v{release.version}")
+        self.update_button.setToolTip(tr("Доступна S3Drive v{version}", version=release.version))
         self.update_button.setEnabled(True)
         self.update_button.setVisible(True)
         self.statusBar().showMessage(
-            f"Доступна новая версия S3Drive v{release.version}. Нажмите «Обновить»."
+            tr("Доступна новая версия S3Drive v{version}. Нажмите «Обновить».", version=release.version)
         )
 
     def start_release_update(self) -> None:
@@ -381,9 +518,9 @@ class MainWindow(QMainWindow):
         if self.available_release is None or not self.update_button.isEnabled():
             return
         self.update_button.setEnabled(False)
-        self.update_button.setText("Загрузка…")
+        self.update_button.setText(tr("Загрузка…"))
         self.statusBar().showMessage(
-            f"Скачивание и проверка S3Drive v{self.available_release.version}…"
+            tr("Скачивание и проверка S3Drive v{version}…", version=self.available_release.version)
         )
         task = _ReleaseDownloadTask(self.available_release)
         task.signals.downloaded.connect(self.on_release_downloaded)
@@ -391,7 +528,7 @@ class MainWindow(QMainWindow):
 
     def on_release_downloaded(self, staged: StagedUpdate | None, error: str) -> None:
         """Close normally, then let a separate updater replace the executable."""
-        self.update_button.setText("Обновить")
+        self.update_button.setText(tr("Обновить"))
         if error or staged is None:
             self.update_button.setEnabled(True)
             QMessageBox.warning(
@@ -411,9 +548,7 @@ class MainWindow(QMainWindow):
             self.update_button.setEnabled(True)
             QMessageBox.warning(
                 self, "Обновление отложено",
-                "Сначала безопасно отключите фоновые диски "
-                + ", ".join(background)
-                + " после завершения загрузки в S3. Службы Windows не затронуты."
+                tr("Сначала безопасно отключите фоновые диски {drives} после завершения загрузки в S3. Службы Windows не затронуты.", drives=", ".join(background))
             )
             return
 
@@ -483,7 +618,7 @@ class MainWindow(QMainWindow):
         self.items.setCurrentRow(-1)
         for widget in (self.endpoint, self.bucket, self.access, self.secret):
             widget.clear()
-        self.name.setText("Личный сетевой диск")
+        self.name.setText(tr("Личный сетевой диск"))
         self.drive.setCurrentText("S:")
         self.path_style.setChecked(True)
         self.shortcut_checkbox.setChecked(True)
@@ -491,7 +626,7 @@ class MainWindow(QMainWindow):
         self.background_checkbox.setChecked(False)
         self.service_checkbox.setChecked(True)
         self.region.setText("us-east-1")
-        self.status.setText("Новый профиль. Заполните поля и нажмите «Сохранить».")
+        self.status.setText(tr("Новый профиль. Заполните поля и нажмите «Сохранить»."))
 
     def draft(self) -> Profile:
         profile = Profile(
@@ -557,7 +692,7 @@ class MainWindow(QMainWindow):
             if mounted:
                 self.mounts.sessions[profile.id].profile = profile
             self.refresh_items(profile.id)
-            self.status.setText("Настройки сохранены (ключи защищены Windows DPAPI).")
+            self.status.setText(tr("Настройки сохранены (ключи защищены Windows DPAPI)."))
             return True
         except Exception as exc:
             QMessageBox.warning(self, "Не удалось сохранить профиль", str(exc))
@@ -634,7 +769,7 @@ class MainWindow(QMainWindow):
                 run_admin("install", profile.id)
                 notify_explorer()
                 self.pending_mounts[profile.id] = (profile, time.monotonic())
-                self.status.setText(f"Подключение службы и диска {profile.drive}…")
+                self.status.setText(tr("Подключение службы и диска {drive}…", drive=profile.drive))
             else:
                 if service_status(profile.id) is not None:
                     raise RuntimeError(
@@ -643,7 +778,7 @@ class MainWindow(QMainWindow):
                     )
                 self.mounts.start(profile)
                 self.pending_mounts[profile.id] = (profile, time.monotonic())
-                self.status.setText(f"Подключение диска {profile.drive}…")
+                self.status.setText(tr("Подключение диска {drive}…", drive=profile.drive))
 
         except Exception as exc:
             QMessageBox.warning(self, "Не удалось подключить S3", str(exc))
@@ -664,7 +799,7 @@ class MainWindow(QMainWindow):
             else:
                 self.mounts.stop(profile.id)
             self.pending_mounts.pop(profile.id, None)
-            self.status.setText(f"Диск {profile.drive} отключён.")
+            self.status.setText(tr("Диск {drive} отключён.", drive=profile.drive))
         except Exception as exc:
             QMessageBox.warning(self, "Не удалось отключить диск", str(exc))
         self.update_status()
@@ -688,32 +823,32 @@ class MainWindow(QMainWindow):
                     try:
                         create_desktop_shortcut(profile.drive, profile.name)
                     except Exception as exc:
-                        problems.append(f"Ярлык на рабочем столе не создан: {exc}")
+                        problems.append(tr("Ярлык на рабочем столе не создан: {error}", error=exc))
                 if profile.open_after_mount:
                     try:
                         open_mounted_disk(profile.drive)
                     except Exception as exc:
-                        problems.append(f"Не удалось открыть диск: {exc}")
-                message = f"Диск {profile.drive} успешно подключён."
+                        problems.append(tr("Не удалось открыть диск: {error}", error=exc))
+                message = tr("Диск {drive} успешно подключён.", drive=profile.drive)
                 native_label = read_native_volume_label(profile.drive)
                 if native_label and native_label != profile.name:
-                    message += (f"\nСистемная метка WinFsp: {native_label}. "
-                                "Полное имя дополнительно задано для Проводника Windows.")
+                    message += "\n" + tr("Системная метка WinFsp: {label}. Полное имя дополнительно задано для Проводника Windows.", label=native_label)
                 if problems:
                     message += "\n\n" + "\n".join(problems)
                 QMessageBox.information(self, "S3Drive", message)
             elif state == MountState.FAILED:
                 QMessageBox.warning(
                     self, "Ошибка подключения",
-                    f"Не удалось подключить диск {profile.drive}: rclone или служба завершилась.\n"
-                    f"Подробности: {app_data_dir() / 'logs' / (profile.id + '.log')}",
+                    tr("Не удалось подключить диск {drive}: rclone или служба завершилась.\n"
+                    "Подробности: {log}", drive=profile.drive,
+                    log=app_data_dir() / 'logs' / (profile.id + '.log')),
                 )
             else:
                 QMessageBox.warning(
                     self, "Подключение не подтверждено",
-                    f"Диск {profile.drive} не появился в Windows за 40 секунд.\n"
+                    tr("Диск {drive} не появился в Windows за 40 секунд.\n"
                     "Не отключайте компьютер во время записи в S3.\n"
-                    "rclone всё ещё работает; проверьте журнал и состояние диска.",
+                    "rclone всё ещё работает; проверьте журнал и состояние диска.", drive=profile.drive),
                 )
         self.update_status()
 
@@ -733,11 +868,11 @@ class MainWindow(QMainWindow):
             return
         answer = QMessageBox.question(
             self, "Очистить кэш",
-            f"Проверить загрузки, отключить диск {profile.drive} "
+            tr("Проверить загрузки, отключить диск {drive} "
             "и удалить локальный кэш?\n\n"
             "Это отключит диск до следующего ручного подключения. "
             "Если есть незавершённые загрузки, открытые файлы или ошибки, "
-            "операция будет отменена.",
+            "операция будет отменена.", drive=profile.drive),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -753,8 +888,8 @@ class MainWindow(QMainWindow):
             self.hide_transfer_popup()
             QMessageBox.information(
                 self, "Кэш очищен",
-                f"Локальный кэш {profile.name} очищен. Диск отключён. "
-                "Подключите его снова при необходимости.",
+                tr("Локальный кэш {name} очищен. Диск отключён. "
+                "Подключите его снова при необходимости.", name=profile.name),
             )
         except Exception as exc:
             QMessageBox.warning(self, "Кэш не очищен", str(exc))
@@ -816,7 +951,7 @@ class MainWindow(QMainWindow):
         if snapshot is None:
             if error != self.monitor_last_error:
                 self.monitor_last_error = error
-                self.statusBar().showMessage("Монитор загрузок: " + error[:170], 12000)
+                self.statusBar().showMessage(tr("Монитор загрузок: {error}", error=error[:170]), 12000)
             # Недостоверная статистика не должна скрывать уже открытую передачу.
             return
         self.monitor_last_error = ""
@@ -842,11 +977,11 @@ class MainWindow(QMainWindow):
             self.dismissed_uploads.discard(profile_id)
             if snapshot.errors:
                 self.statusBar().showMessage(
-                    "S3Drive: обнаружены ошибки передачи. Проверьте журнал rclone.", 15000
+                    tr("S3Drive: обнаружены ошибки передачи. Проверьте журнал rclone."), 15000
                 )
             elif profile_id in self.uploads_seen:
                 self.uploads_seen.discard(profile_id)
-                self.statusBar().showMessage("S3Drive: загрузка файлов на S3 завершена", 8000)
+                self.statusBar().showMessage(tr("S3Drive: загрузка файлов на S3 завершена"), 8000)
 
     def update_status(self):
         profile = self.selected_profile()
@@ -865,21 +1000,21 @@ class MainWindow(QMainWindow):
         self.clear_cache_button.setEnabled(active)
         self.unmount_button.setEnabled(active)
         self.unmount_button.setText(
-            "Остановить службу и диск" if service is not None
-            else "Отключить фон и диск" if user_running and self.mounts.keep_running(profile.id)
-            else "Отключить диск"
+            tr("Остановить службу и диск") if service is not None
+            else tr("Отключить фон и диск") if user_running and self.mounts.keep_running(profile.id)
+            else tr("Отключить диск")
         )
         self.mount_button.setEnabled(not active)
         if profile.id in self.pending_mounts:
-            text = "Подключение…"
+            text = tr("Подключение…")
         elif service_running:
-            text = "Служба работает; диск в Проводнике" if ready else "Служба запущена; диск не обнаружен"
+            text = tr("Служба работает; диск в Проводнике") if ready else tr("Служба запущена; диск не обнаружен")
         elif service == SERVICE_STOPPED:
-            text = "Служба установлена, остановлена"
+            text = tr("Служба установлена, остановлена")
         elif user_running:
-            text = "Подключён (в фоне)" if self.mounts.keep_running(profile.id) else "Подключён"
+            text = tr("Подключён (в фоне)") if self.mounts.keep_running(profile.id) else tr("Подключён")
         else:
-            text = "Отключён"
+            text = tr("Отключён")
         self.status.setText(f"{profile.drive}: {text}")
 
     def closeEvent(self, event):
@@ -969,6 +1104,7 @@ def main() -> int:
     # prevents two simultaneous first-run installer dialogs.
     with SingleInstance() as instance:
         app = QApplication(sys.argv)
+        set_language(read_language(config_path()))
         if not instance.acquired:
             QMessageBox.information(
                 None, "S3Drive уже запущен",

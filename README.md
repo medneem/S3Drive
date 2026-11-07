@@ -1,265 +1,86 @@
 # S3Drive
 
-Открытый Windows-клиент для подключения **S3-бакетов как дисков Windows** через [rclone](https://rclone.org/) и [WinFsp](https://winfsp.dev/). UI на **Python 3.13 / PySide6**. Проект использует структуру версий, тестирования, генерации иконки и GitHub Actions из [FlacSplitter](https://github.com/medneem/FlacSplitter).
+**English** | [Русский](README.ru.md)
 
-## Возможности первой версии
+S3Drive is an open-source, portable Windows application that mounts S3-compatible storage as a Windows drive using [rclone](https://rclone.org/) and [WinFsp](https://winfsp.dev/). Built with Python 3.13 and PySide6.
 
-- Создание нескольких S3-профилей с Endpoint, бакетом, Access/Secret Key, буквой диска и регионом.
-- HTTP(S) S3-совместимые endpoints (QNAP, MinIO и т. п.) и Path-Style.
-- Поле **«Бакет» необязательно**. Если оставить его пустым, монтируется корень S3
-  (`s3drive_mount:`), а доступные бакеты отображаются как папки в Проводнике.
-  Для этого нужны права на получение списка бакетов (`ListBuckets` /
-  `s3:ListAllMyBuckets`); права на конкретные бакеты определяются политикой
-  S3. Если доступ только к одному бакету, укажите его имя в поле.
-  В корне S3 создание/удаление папок может означать создание/удаление бакетов;
-  такие операции могут требовать отдельных прав. Удаляйте бакеты осторожно.
-- Диски Windows монтируются в сетевом режиме WinFsp (`--network-mode`) с уникальным
-  UNC-путём для каждого профиля. При этом остаётся назначенная буква диска и
-  пользовательское название. Так Windows Installer не должен выбирать
-  S3Drive как огромный локальный диск для временных папок `MSI*.tmp`.
-  В режиме корня S3 (`Бакет` не указан) папка первого уровня — это **бакет**,
-  а не обычная директория, поэтому удаление и создание таких объектов
-  следует выполнять только осознанно.
-- **Существующие запущенные службы не обновляются автоматически:** новый режим
-  начинает работать после штатного отключения и повторного подключения
-  службы из S3Drive. Если остановку блокируют ожидающие VFS-отправки, нельзя
-  принудительно останавливать службу или очищать кэш: сначала разберитесь с
-  ошибками в `rclone.log` и сохраните незагруженные данные.
-- Запуск `rclone mount` с локальным VFS-кэшем `writes`. Сообщение «Диск подключён» появляется только после фактического появления диска в Windows (а не при старте процесса).
-- Отключение через защищённый локальный rclone RC API (без принудительного `taskkill`).
-- **Монитор загрузки на S3:** отдельное окно показывается только при отправке файлов **на S3** и наличии ожидающей очереди VFS. Для каждой отправки показаны имя файла, объём, процент выполнения, скорость и оставшееся время; при нескольких отправках доступны отдельные строки и общий прогресс. **Для скачивания с S3 используется штатное окно копирования Проводника Windows — S3Drive не показывает второе окно.** Монитор работает только при открытом GUI S3Drive. Пользовательские подключения используют авторизованный RC (`core/stats` + `vfs/queue`), служба — JSON-журнал rclone. Передачи с неподтверждённым направлением также не вызывают собственное окно.
-- **Работа без трея:** S3Drive — обычное окно настройки и управления диском. Крестик завершает GUI; если диск запущен как служба Windows, она продолжает работать и сохраняет диск в Проводнике. Собственный монитор отправки на S3 работает **только пока открыта программа**. После закрытия окна никакие уведомления об отправке на рабочем столе не появляются, но фактическая загрузка через службу продолжается. Старая запись автозапуска монитора из HKCU Run при следующем запуске программы удаляется без изменения настроек службы.
-- **Обновление уже установленной службы:** для мониторинга входящих и исходящих передач она должна писать JSON-статистику (`--use-json-log --stats 2s`). После установки новой версии S3Drive безопасно остановите службу, дождитесь отсутствия загрузок и заново подключите её через программу. До обновления службы окно передачи не показывается; повторяющихся ошибок `401` больше нет. Читать журнал могут интерактивные пользователи Windows, но файлы RC и S3-ключей остаются закрытыми.
-- **Остановка службы или диска** блокируется при ожидающих, активных или ошибочных отправках на S3. Показатель rclone `vfs/stats.inUse` при нормальной работе равен как минимум 1, поскольку считает ссылки на VFS, **а не открытые файлы**, поэтому сам по себе не мешает остановке. Перед остановкой закройте редактируемые файлы.
-- **Кнопка «Очистить кэш»** дополнительно проверяет отсутствие дополнительных ссылок VFS, затем **отключает выбранный диск** и удаляет только его локальный VFS-кэш. При отказе проверки ничего не удаляется. Дополнительные ссылки не обязательно означают открытые файлы; их отсутствие само по себе не гарантирует отсутствия открытой записи. Перед очисткой обязательно закройте файлы и убедитесь, что все данные отправлены на S3. Очистка уже остановленной службы или аварийно завершённого монтирования запрещена.
-- Галочки для каждого подключения: **«Создать ярлык на рабочем столе»** (по имени подключения, например `QNAP (S)`), **«Открыть диск после подключения»**, **«Оставлять диск подключённым после закрытия программы»**. Настройки сохраняются в `config.json`.
-- Режим фонового подключения позволяет закрыть окно S3Drive, не отключая диск. Процесс rclone продолжает работать под текущим пользователем Windows. При следующем запуске программа повторно подключается к управлению процессом через авторизованный локальный API.
-- Кнопка **«Отключить фон и диск»** выключает соответствующий rclone и монтирование. Если в VFS остаются незавершённые загрузки или ошибки записи, отключение блокируется для защиты данных.
-- Состояние процессов хранится в `%LOCALAPPDATA%\\S3Drive\\background.json`. Пароль локального API шифруется Windows DPAPI; не публикуйте этот файл.
-- Настройки и профили автоматически сохраняются в **`config.json` рядом с `S3Drive.exe`** после нажатия «Сохранить» (создаётся также при первом запуске), загружаются при следующем запуске. Access Key и Secret Key хранятся зашифрованными через Windows DPAPI, привязаны к учётной записи Windows.
-- Своя отдельная директория кэша и журналов для каждого подключения (`%LOCALAPPDATA%\\S3Drive`).
-- При обновлении со старой версии профили из `%LOCALAPPDATA%\\S3Drive\\profiles.json` автоматически переносятся в `config.json` при его отсутствии. Оригинальный файл сохраняется.
-- Портативный Windows x64 ZIP с `S3Drive.exe`, **`rclone.exe` и официальным установщиком WinFsp**; версии для CI имеют вид `1.0.0-dev.<github.run_number>`, а официальные релизы используют SemVer (`1.0.0`, `1.0.1`, …). Загрузки фиксированных версий проверяются по SHA256.
+**Interface languages:** English (default) and Russian. Click **Settings → Interface language**, select a language, and save. The choice persists in config.json across launches and does not disconnect running drives.
 
-**Важно:** `config.json` требует прав записи в папку приложения. Данные DPAPI из `config.json` нельзя просто перенести на другой компьютер или в другую учётную запись Windows и расшифровать; потребуется повторно ввести ключи. Не публикуйте `config.json` и не включайте его в Git.
+## Features
 
-## Требования
+- Multiple S3 connection profiles: endpoint, bucket, access and secret key, custom name, region, path-style option, and drive letter.
+- S3-compatible HTTP(S) services including QNAP and MinIO.
+- Optional bucket: leave empty to mount the S3 account root. Accessible buckets appear as folders, provided the credentials have ListBuckets / s3:ListAllMyBuckets permission.
+- Windows network drive via WinFsp and rclone; custom volume name and a unique UNC path per mount.
+- Windows service mode using LocalSystem, with Windows autostart. The drive can stay mounted independently of the GUI, including after a reboot.
+- Optional user background mode, which keeps a drive mounted after closing S3Drive. This mode does not auto-reconnect after reboot.
+- VFS writes cache, safe disconnect, and guarded cache cleanup that avoids discarding queued or unsent writes.
+- Separate S3 upload monitor showing pending and active uploads, file names, progress, speed, and remaining time. Windows Explorer handles download progress.
+- Optional desktop shortcut and opening the drive after a successful connection.
+- Access Key and Secret Key encrypted with Windows DPAPI in config.json.
+- Single-instance interface without a tray icon.
+- Update button appears when a newer stable GitHub Release is found. Downloads and installation require an explicit click; the official archive is SHA-256 verified.
+- English and Russian interface and setup documentation.
 
-Windows 10/11 x64. В архиве уже есть **`rclone.exe`** и **`winfsp-2.2.26215.msi`**. Распакуйте ZIP полностью и запустите S3Drive от обычного пользователя. **При первом запуске приложение проверит WinFsp**. Если драйвер отсутствует, появится предложение установить его из комплектного MSI с подтверждением прав администратора. При отказе или отсутствии установщика программа объяснит причину и закроется. После запуска установщика завершите установку и запустите S3Drive повторно. Если WinFsp уже установлен, никаких дополнительных вопросов не будет.
+## Requirements
 
-Версии зависимостей сейчас закреплены: **rclone 1.76.0-beta.10713.5c143c89b** и **WinFsp 2026 Beta4**. Временное использование точно закреплённой beta rclone необходимо для исправления удаления бакетов из корня S3 с `--s3-directory-markers`: стабильная 1.75.2 ошибочно выполняет `DeleteObject` с пустым `Key` вместо `DeleteBucket`. До следующего стабильного rclone эта beta требует проверки на реальном QNAP. ZIP проверяется по фиксированному SHA256 в `scripts/download_dependencies.ps1`.
+- Windows 10 or 11, x64.
+- WinFsp driver. The release ZIP contains the WinFsp installer; S3Drive offers to install it if missing.
+- S3-compatible credentials and endpoint, and permission to create config.json beside S3Drive.exe.
 
-**Пример QNAP:** Endpoint `http://nas.local:8010`, бакет `my-backup`, Path-Style = включён, регион `us-east-1` (при необходимости измените). Введите свои ключи S3. Используйте HTTP только в доверенной локальной сети.
+rclone.exe is bundled with the portable ZIP.
 
-## Разработка
+## Installation and first use
 
-```powershell
-py -3.13 -m venv .venv
-.\\.venv\\Scripts\\Activate.ps1
-python -m pip install -r requirements-build.txt
-python -m unittest discover -s tests -v
-python main.py
-```
+1. Download the latest ZIP from [GitHub Releases](https://github.com/medneem/S3Drive/releases) and extract **all files** to one writable folder. Do not run S3Drive directly inside the ZIP.
+2. Start S3Drive.exe as a normal Windows user, not as administrator.
+3. If WinFsp is missing, accept the install prompt, finish installing the bundled MSI, and run S3Drive again.
+4. Enter an Endpoint, Access Key, Secret Key, optional Bucket, and drive letter. Enable Path-style for servers that require it.
+5. Select the desired shortcut, open-after-mount, and background/service options.
+6. Click **Save**, then **Connect** and wait for the drive to appear in Explorer.
+7. Open **Settings** to select English or Русский; the setting is remembered.
 
-Сборка осуществляется через `.github/workflows/build-windows.yml`: тесты, stamping версии, PyInstaller onefile, загрузка и проверка SHA256 официальных зависимостей и проверка содержимого ZIP. При push в `main` или в Pull Request создаётся **только CI-артефакт**, а не GitHub Release.
+For step-by-step help see [README_SETUP.txt](README_SETUP.txt) (English) and [README_SETUP_RU.txt](README_SETUP_RU.txt) (Russian).
 
-### Версии и публикация релизов
+## Configuration and language
 
-- Первая версия в новой схеме — **`v1.0.0`**. Исторические релизы `v0.1.*` остаются без изменений.
-- Обычная сборка: `1.0.0-dev.<github.run_number>`; ZIP доступен во вкладке **Actions** (срок хранения — 14 дней).
-- Релиз **только по явному решению**: GitHub → **Actions** → **Build Windows** → **Run workflow** → выбрать ветку `main` → ввести `release_version`, например `1.0.0` (без `v`).
-- Workflow запускает те же проверки, собирает ZIP с заданной версией, создаёт Git-тег `v1.0.0` и публикует GitHub Release **только после успешной сборки**.
-- Если тег или релиз уже существует, публикация прерывается — существующий релиз не перезаписывается.
-- Перед очередным релизом агент должен предложить новую версию согласно SemVer и запросить решение владельца; никаких релизов по умолчанию после push в `main`.
+A portable config.json lives beside S3Drive.exe. It stores both profiles and the UI language. The top-level language setting is "en" by default or "ru" for Russian. Older config.json files without this property automatically use English; existing profiles remain unchanged.
 
+Connection keys are stored encrypted using Windows DPAPI. Do not publish your config.json. DPAPI encryption is tied to Windows protection and cannot simply be decrypted on another machine/account. Changing the UI language does not touch the mounted drive or service state.
 
+## Windows service and background mounts
 
-Порядок установки описан также в `README_SETUP.txt`, который кладётся в архив.
+**Run as Windows service** installs a LocalSystem service that can start automatically with Windows and keep the drive available in Explorer while S3Drive is closed. UAC confirmation is required for service administration. Use **Stop service and drive** for safe shutdown, then **Remove service** if it is no longer needed; removing a stopped service keeps the saved profile.
 
-## Известные ограничения
+An already-running service does not automatically receive new mount options after an application update. To apply them, first close edited files, wait for S3 transfers, and disconnect/reconnect via S3Drive. Do not force-stop or delete the cache of a service with pending uploads.
 
-- Это **S3, а не NTFS**: rename может превращаться в copy+delete; файловые блокировки и случайные записи не всегда эквивалентны локальной файловой системе.
-- Не храните на таком диске базы данных, Git-репозитории или активно редактируемые многопользовательские файлы.
-- **Изменённые файлы могут оставаться в VFS-кэше до загрузки в S3**. Перед отключением обязательно закройте все файлы, дождитесь завершения передачи и проверьте данные на сервере.
-- При запуске **как службы Windows** диск подключается автоматически после перезагрузки независимо от GUI. Пользовательский фоновый rclone (без службы) работает только до завершения соответствующей сессии Windows либо ручного отключения; автоматически после перезагрузки не восстанавливается. При аварийном завершении rclone данные могут оставаться в VFS-кэше.
-- Проект ещё нуждается в функциональном тестировании на Windows с установленным WinFsp и реальным QNAP S3. Наличие запущенного процесса rclone само по себе не гарантирует успешное монтирование.
+**Keep drive connected after closing the app** keeps an ordinary user mount in the background without installing a service. This mode does not provide reconnection after a Windows reboot. S3Drive does not display a tray icon or transfer popup after the GUI closes.
 
-MIT; см. `THIRD_PARTY_NOTICES.md` по сторонним компонентам.
+## S3 filesystem behavior and safety
 
-## Настоящая служба Windows (диск в Проводнике)
+S3 is object storage, not NTFS. A "folder" may be an object prefix or a zero-byte directory marker. S3Drive configures rclone to handle directory markers and has S3 directory deletion regression tests, but server permissions and S3 semantics still apply.
 
-Включите **«Запускать как службу Windows (доступно в Проводнике)»**, сохраните
-профиль и нажмите «Подключить». Windows запросит права администратора.
-S3DriveAdmin.exe установит отдельную службу для выбранного профиля,
-запускающую rclone от **LocalSystem**. В этом режиме буква диска доступна
-обычному Проводнику и служба автоматически стартует вместе с Windows.
+In an account-root mount (bucket left blank), each top-level folder represents a **real bucket**. Creating or deleting such a folder can create or delete a bucket, if the account has permission. Use caution.
 
-**«Остановить службу и диск»** проверяет очередь загрузки VFS и останавливает
-службу только при отсутствии несинхронизированных файлов. После остановки
-можно нажать **«Удалить службу»** (служба удаляется, профиль в config.json остаётся).
+The VFS write cache can hold data that has not yet reached S3. Use **Clear cache** in the app only after pending transfers have been checked. Do not manually delete cached files while any upload may be outstanding. Avoid storing live databases or active Git working trees on S3 mounts.
 
-Для службы rclone.exe переносится в защищённый от изменения пользователями
-каталог ProgramData, как и отдельный S3-конфиг. В этом каталоге S3-ключи
-хранятся в файле конфигурации, доступном только SYSTEM и Administrators.
-Для управления службой используется локальный аутентифицированный RC API;
-его пароль хранится в каталоге службы с теми же ограничениями доступа.
-Для хранения обычных профилей по-прежнему используется DPAPI.
+## Updating S3Drive
 
-**Важно:** это системный диск, видимый другим локальным пользователям.
-Операции со службой требуют UAC. При запуске от имени другого администратора
-Windows DPAPI может не разрешить расшифровать исходный профиль.
-В таком случае установку следует выполнить под своей административной
-учётной записью. Не используйте службу для доступа к секретным бакетам,
-которым запрещён доступ других пользователей Windows.
+At launch, S3Drive checks stable releases in the background. When offline, an existing drive can still be used. **Update** is shown only when a newer stable release exists, and no update downloads automatically.
 
-Если ранее диск был подключён пользовательским процессом rclone, сначала
-отключите его, а затем переключайте профиль на режим службы. Нельзя
-одновременно монтировать один диск двумя разными процессами.
+After confirmation, S3Drive downloads and verifies the official release ZIP, closes safely, and launches S3DriveUpdater.exe. The updater preserves config.json, service-specific rclone binaries, and VFS caches. If a user background mount is active, the update can be postponed until it is safely disconnected.
 
-### Удаление файлов на диске Windows
+Older S3Drive distributions without S3DriveUpdater.exe require extracting a full new ZIP manually while preserving config.json.
 
-Для службы LocalSystem используется WinFsp `FileSecurity=D:P(A;;FA;;;WD)`:
-полный доступ ко всем объектам диска для локальных пользователей Windows,
-включая удаление файлов и папок. До v0.1.21 применялось `FRFW`, которое
-разрешало читать/записывать, но запрещало удаление через Проводник.
+## Development and testing
 
-**Обновление уже установленной службы:** закройте работающие файлы и
-дождитесь завершения загрузок в S3, затем в S3Drive нажмите
-«Остановить службу и диск», после остановки — «Подключить».
-Программа перезапишет `binPath` существующей службы новым параметром.
-Простая замена EXE не меняет аргументы ранее установленной службы.
+The project runs on Python 3.13 and PySide6. Install dependencies using requirements-build.txt, then run:
 
-**Безопасность:** `WD` означает Everyone. Полный доступ к диску
-будет у всех локальных пользователей с доступом к этому монтированию.
-Файловые ACL не заменяют ограничения, заданные S3-бакету и ключам.
+    python -m unittest discover -s tests -v
+    python -m compileall -q main.py localization.py profiles.py tests
 
-### Имя диска в Проводнике
+GitHub Actions builds a Windows x64 portable ZIP and runs tests in three verification passes. Pushes to main **do not create releases**; releases are published only after an explicitly requested manual workflow. The repository also includes separate Windows/S3 directory-deletion integration tests.
 
-Метка тома (`--volname`) равна **точному названию подключения** из поля
-«Название»; префикс `S3Drive - ` не добавляется. В прежних версиях этот
-префикс приводил к обрезанию длинных названий в Проводнике Windows.
+For technical details see the [docs directory](docs/), [third-party notices](THIRD_PARTY_NOTICES.md), [rclone license](third_party/RCLONE_LICENSE.txt), and [LICENSE](LICENSE).
 
-Для уже установленной службы после обновления ZIP необходимо остановить
-службу и повторно нажать «Подключить», чтобы заменить параметры службы
-Windows (в том числе `--volname`). **Не удаляйте config.json**.
-
-## Обновление программы
-
-При запуске **портативной релизной сборки** проверяется последний стабильный
-GitHub Release. Запрос выполняется в фоне и не мешает офлайн-работе.
-При наличии новой версии рядом с версией отображается кнопка **«Обновить»**;
-при отсутствии обновления кнопка скрыта. Проверка ничего не загружает.
-
-**Только по нажатию** скачивается официальный ZIP и проверяются SHA-256
-из GitHub Release API, состав архива и VERSION.txt. S3Drive штатно завершает
-работу, отдельный S3DriveUpdater.exe заменяет только 11 файлов программы
-с резервной копией и откатом при ошибке и затем перезапускает GUI.
-`config.json` и данные приложений не трогаются. Подключённые службы Windows
-и их приватные копии rclone.exe под ProgramData не затрагиваются:
-для применения нового rclone их надо штатно переподключить после отправки
-очереди VFS в S3. Если у пользователя активен фоновый rclone, обновление
-откладывается до безопасного отключения, чтобы избежать потери файлов.
-
-Для обновления старой версии, в архиве которой ещё нет
-`S3DriveUpdater.exe`, один раз требуется ручное обновление ZIP.
-CI-сборки с суффиксом dev не проверяют релизы автоматически.
-
-## Аудит и проверки
-
-См. [аудит 2026-10-29](docs/AUDIT-2026-10-29.md): исправленные дефекты,
-трёхкратный прогон Windows-тестов и оставшиеся проверки на реальном QNAP.
-
-### Полное русское имя тома
-
-В rclone 1.75.2 функция `mountlib.Options.SetVolumeName` обрезает метку на
-`vol[:32]` **по байтам UTF-8**, а не по символам. Поэтому имя
-«Личный сетевой диск» (36 байт UTF-8) ранее превращалось в
-«Личный сетевой ди» (32 байта). Это происходит внутри rclone ещё до WinFsp.
-
-S3Drive теперь отправляет метку напрямую через официальную опцию
-`--option "volname=Личный сетевой диск"`, которая попадает в
-`mountOptions.ExtraOptions` и из rclone напрямую в FUSE/WinFsp.
-Она **не проходит через** `SetVolumeName`, поэтому имя сохраняется целиком.
-Применяется как к обычным подключениям, так и к службам Windows.
-
-После обновления установленную службу нужно **остановить и подключить снова**:
-SCM сохраняет ранее сформированную командную строку. Проверьте
-`[System.IO.DriveInfo]::new('S:\\').VolumeLabel`; оно должно вернуть
-`Личный сетевой диск` после перезапуска службы, но это ещё требует
-проверки на настоящей Windows.
-
-### Один экземпляр S3Drive
-
-В одной пользовательской сессии Windows разрешён **только один экземпляр
-`S3Drive.exe`**. Используется атомарный Windows named mutex
-`Local\\S3Drive.Desktop.GUI`: при повторном запуске появится сообщение
-«S3Drive уже запущен», после чего новая копия завершится, не открывая
-второе окно и не вызывая установку WinFsp. При нормальном или аварийном
-закрытии Windows освобождает mutex автоматически — блокировка не остаётся
-в виде файла.
-
-**Важно:** блокировка относится только к GUI в текущей сессии; фоновые
-процессы rclone и службы Windows продолжают работать. Другие независимые
-сеансы Windows не блокируются этим `Local\\` mutex.
-
-## Защита от зависших отложенных отправок
-
-Все профили запускают rclone с `--vfs-cache-mode writes` и
-`--vfs-write-back 0s`: закрытый для записи файл немедленно становится
-доступен для отправки, без дополнительного ожидания по умолчанию.
-**Это уменьшает окно гонки, но не гарантирует синхронизацию с удалениями
-через Cyberduck или другие клиенты.** До подтверждения удалённого
-объекта в S3 данные могут оставаться только в VFS-кэше.
-
-Если при остановке службы есть очередь, S3Drive теперь запрашивает
-`vfs/queue` и показывает первые пять имён файлов **в UTF-8**. Служба
-останется запущенной, а кэш не будет удалён. До устранения ошибки
-отправки нельзя очищать его или принудительно выключать службу.
-
-PowerShell 5.1 иногда неверно интерпретирует UTF-8 при
-`Invoke-RestMethod` и отображает длинное тире как `â`.
-**Не переименовывайте файлы по такому выводу.** Для диагностики
-запрашивайте RC через `Invoke-WebRequest`, декодируйте
-`RawContentStream` явно с UTF-8 и затем вызывайте `ConvertFrom-Json`.
-Внутри S3Drive RC-ответ уже декодируется как UTF-8.
-
-## Интеграционные тесты удаления каталогов S3
-
-Отдельный GitHub Actions workflow `S3 deletion E2E (Windows WinFsp)`
-проверяет удаление вложенных папок через настоящий `rclone mount`,
-включая подключение корня S3 и изменение файлов другим клиентом.
-Используются только изолированный сервер Moto на `127.0.0.1`,
-одноразовые тестовые бакеты и официальные rclone/WinFsp.
-Тесты проверяют фактический список объектов S3 и повторное монтирование,
-а не только исчезновение папки в Проводнике. Подробнее:
-[`docs/S3-DELETE-REPRO.md`](docs/S3-DELETE-REPRO.md).
-Данный тест не обращается к реальному QNAP.
-**Причина ранее не удалявшихся целых бакетов:** rclone 1.75.2 с `--s3-directory-markers` пытался удалить несуществующий marker самого бакета. Тест `test_07_delete_entire_disposable_bucket_from_account_root` сравнивает результат с `ListBuckets`; S3Drive использует исправленную beta rclone.
-
-**Известное ограничение rclone 1.75.2:** при изменении вложенной папки
-другим S3-клиентом во время действия VFS-кэша удаление через Windows
-может завершиться визуально успешно, но не удалить вновь появившийся
-объект с сервера; папка снова проявится после переподключения.
-Это воспроизведено в отдельном WinFsp/Moto E2E (3 из 3).
-Для важного массового удаления проверяйте список объектов напрямую
-в S3-клиенте (например, Cyberduck) после операции.
-**Исправление по умолчанию:** S3Drive передаёт rclone `--dir-cache-time 0s`
-для обычного диска и службы Windows. Это исключает ранее воспроизведённое
-использование устаревшего списка файлов в нашем тесте, в том числе для
-подключённого корня S3. Настройка увеличивает число запросов `LIST`
-и может замедлять просмотр папок, особенно на удалённом S3. Это не
-гарантирует атомарность удаления при одновременных изменениях другими клиентами.
-После обновления ZIP установленную службу нужно **остановить и повторно
-подключить через S3Drive**, чтобы обновилась командная строка SCM.
-Не очищайте VFS-кэш для применения этого изменения.
-
-## Диагностика срабатываний антивирусов
-
-Если антивирус обнаруживает `PDM:Trojan.Win32.Generic`, не отключайте защиту
-и не добавляйте S3Drive в исключения до расследования. Зафиксируйте SHA-256
-`S3Drive.exe` и сохраните детали события Kaspersky (действие, время и
-инициирующий процесс). Возможное ложное срабатывание можно отправить на
-проверку через Kaspersky Threat Intelligence Portal или корпоративную
-поддержку. Успешные тесты и сборка сами по себе не доказывают безопасность
-файла.
-
+Project: https://github.com/medneem/S3Drive

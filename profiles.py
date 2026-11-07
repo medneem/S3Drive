@@ -104,6 +104,7 @@ class ProfileStore:
         legacy_path: Path | None = None,
     ):
         self.path = path if path is not None else config_path()
+        self.language = "en"
         self.encrypt = encrypt or dpapi_encrypt
         self.decrypt = decrypt or dpapi_decrypt
         self.legacy_path = (legacy_path if legacy_path is not None else
@@ -134,7 +135,12 @@ class ProfileStore:
             data = json.loads(self.path.read_text(encoding="utf-8-sig"))
             if not isinstance(data, dict) or not isinstance(data.get("profiles"), list):
                 raise ValueError("config.json должен содержать объект с массивом profiles.")
-            return self._deserialize(data["profiles"])
+            language = data.get("language", "en")
+            if language not in ("en", "ru"):
+                raise ValueError("Unsupported interface language in config.json.")
+            profiles = self._deserialize(data["profiles"])
+            self.language = language
+            return profiles
 
         # Upgrade from earlier releases; never delete the old file.
         if self.legacy_path is not None and self.legacy_path.is_file():
@@ -147,6 +153,8 @@ class ProfileStore:
         return []
 
     def save(self, profiles: list[Profile]) -> None:
+        if self.language not in ("en", "ru"):
+            raise ValueError("Unsupported interface language.")
         records = []
         seen_ids: set[str] = set()
         for profile in profiles:
@@ -162,7 +170,7 @@ class ProfileStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp = self.path.with_name(self.path.name + ".tmp")
         try:
-            temp.write_text(json.dumps({"profiles": records}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            temp.write_text(json.dumps({"language": self.language, "profiles": records}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             temp.replace(self.path)
         finally:
             temp.unlink(missing_ok=True)

@@ -211,7 +211,7 @@ class MountTests(unittest.TestCase):
             path = Path(td) / "config.json"
             store = self.make_store(path)
             self.assertEqual(store.load(), [])
-            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"language": "en", "profiles": []})
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"language": "en", "check_updates_on_startup": True, "profiles": []})
 
     def test_config_file_is_beside_portable_executable(self):
         with tempfile.TemporaryDirectory() as td:

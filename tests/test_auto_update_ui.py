@@ -177,16 +177,28 @@ class ManualUpdateButtonTests(unittest.TestCase):
         self.assertIn("GitHub timeout", gui.statusBar.return_value.showMessage.call_args.args[0])
         self.assertFalse(gui._release_check_running)
 
-    def test_automatic_check_failure_does_not_interrupt_user(self):
+    def test_automatic_check_failure_retries_without_interrupting_user(self):
         gui = SimpleNamespace(
             available_release=None, _manual_release_check=False,
             _release_check_running=True, update_button=Mock(),
-            statusBar=Mock(),
+            statusBar=Mock(), release_check_timer=Mock(),
+            store=SimpleNamespace(check_updates_on_startup=True),
         )
         with patch("main.QMessageBox") as message:
             MainWindow.on_release_checked(gui, None, "offline")
             message.warning.assert_not_called()
+        gui.release_check_timer.start.assert_called_once_with(5 * 60 * 1000)
         self.assertFalse(gui._release_check_running)
+
+    def test_disabled_startup_check_does_not_schedule_retry(self):
+        gui = SimpleNamespace(
+            available_release=None, _manual_release_check=False,
+            _release_check_running=True, update_button=Mock(),
+            statusBar=Mock(), release_check_timer=Mock(),
+            store=SimpleNamespace(check_updates_on_startup=False),
+        )
+        MainWindow.on_release_checked(gui, None, "offline")
+        gui.release_check_timer.start.assert_not_called()
 
     def test_no_new_release_does_not_expose_update_button(self):
         gui = SimpleNamespace(

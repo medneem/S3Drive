@@ -19,6 +19,10 @@ import json
 import zipfile
 
 RELEASE_API = "https://api.github.com/repos/medneem/S3Drive/releases/latest"
+RELEASE_LATEST_PAGE = "https://github.com/medneem/S3Drive/releases/latest"
+RELEASE_PAGE_ROOT = "https://github.com/medneem/S3Drive/releases/tag/v"
+RELEASE_MANIFEST = "S3Drive-update.json"
+MAX_METADATA_BYTES = 1024 * 1024
 RELEASE_DOWNLOAD_ROOT = "https://github.com/medneem/S3Drive/releases/download/"
 USER_AGENT = "S3Drive-Desktop-Updater"
 MAX_ARCHIVE_BYTES = 300 * 1024 * 1024
@@ -92,16 +96,64 @@ def parse_release(data: dict, installed_version: str) -> UpdateInfo | None:
     return UpdateInfo(version, expected_url, match.group(1).lower(), size)
 
 
+def _read_release_json(request: Request, opener) -> dict:
+    """Read bounded release metadata without downloading the ZIP."""
+    with opener(request, timeout=10) as response:
+        raw = response.read(MAX_METADATA_BYTES + 1)
+    if len(raw) > MAX_METADATA_BYTES:
+        raise ValueError("Слишком большой ответ сервера обновлений.")
+    return json.loads(raw)
+
+
+def _check_release_on_github_page(current_version: str, opener) -> UpdateInfo | None:
+    """Fallback: use the official GitHub page and a SHA-256 manifest asset.
+
+    GitHub's web host is often accessible even when api.github.com times out.
+    Never download or install a ZIP without the exact expected digest.
+    """
+    request = Request(RELEASE_LATEST_PAGE, headers={"User-Agent": USER_AGENT})
+    with opener(request, timeout=10) as response:
+        final_url = response.geturl()
+    match = re.fullmatch(
+        re.escape(RELEASE_PAGE_ROOT)
+        + r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)/?",
+        final_url,
+    )
+    if match is None:
+        raise ValueError("Не удалось определить стабильную версию на странице GitHub.")
+    version = ".".join(match.groups())
+    if _version_parts(version) <= _version_parts(current_version):
+        return None
+
+    manifest_url = RELEASE_DOWNLOAD_ROOT + f"v{version}/{RELEASE_MANIFEST}"
+    metadata = _read_release_json(
+        Request(manifest_url, headers={"User-Agent": USER_AGENT}), opener
+    )
+    if not isinstance(metadata, dict) or metadata.get("tag_name") != f"v{version}":
+        raise ValueError("Версия манифеста обновления не совпадает с GitHub Release.")
+    update = parse_release(metadata, current_version)
+    if update is None:
+        raise ValueError("Резервный манифест не содержит допустимого обновления.")
+    return update
+
+
 def check_latest_release(current_version: str, *, opener=urlopen) -> UpdateInfo | None:
-    """Fetch release metadata without downloading the asset."""
+    """Check GitHub API first; fall back to its release page on network failure."""
     if _version_parts(current_version) is None:
         return None
     request = Request(
         RELEASE_API,
         headers={"User-Agent": USER_AGENT, "Accept": "application/vnd.github+json"},
     )
-    with opener(request, timeout=10) as response:
-        data = json.loads(response.read(1024 * 1024 + 1))
+    try:
+        data = _read_release_json(request, opener)
+    except OSError as api_error:
+        try:
+            return _check_release_on_github_page(current_version, opener)
+        except OSError as web_error:
+            raise ConnectionError(
+                f"GitHub API: {api_error}; GitHub Releases: {web_error}"
+            ) from web_error
     return parse_release(data, current_version)
 
 

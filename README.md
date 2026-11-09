@@ -66,7 +66,7 @@ The VFS write cache can hold data that has not yet reached S3. Use **Clear cache
 
 ## Updating S3Drive
 
-By default, S3Drive checks for a newer stable GitHub Release at startup. In **Settings** you can disable **Check for new versions at startup** (saved in `config.json`), or click **Check for updates** whenever you want, even when automatic checks are disabled. A failed automatic check is retried once after five minutes (and again if still offline); manual check errors are shown in a dialog. Offline S3 mounts are unaffected. **Update** appears in the main window only when a newer release is found; nothing downloads automatically.
+By default, S3Drive checks for a newer stable GitHub Release at startup. In **Settings** you can disable **Check for new versions at startup** (saved in `config.json`), or click **Check for updates** whenever you want, even when automatic checks are disabled. When `api.github.com` is unreachable, the updater checks the official GitHub Releases page instead. If a newer version exists, it reads the `S3Drive-update.json` sidecar asset from that release to obtain the exact ZIP SHA-256. It never installs a ZIP when verified metadata is missing. A failed automatic check is retried after five minutes; manual check errors are shown in a dialog. Offline S3 mounts are unaffected. **Update** appears in the main window only when a newer release is found; nothing downloads automatically.
 
 The packaged rclone version is stable **1.76.0**, which fixes deletion of account-root buckets when S3 directory markers are enabled.
 

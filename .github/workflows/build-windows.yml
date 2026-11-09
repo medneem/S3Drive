@@ -171,7 +171,9 @@ jobs:
           fi
           notes="release/RELEASE_NOTES.md"
           python scripts/release_notes.py --version "$RELEASE_VERSION" --output "$notes"
-          gh release create "$tag" "$zip" \
+          manifest="release/S3Drive-update.json"
+          python scripts/release_manifest.py --version "$RELEASE_VERSION" --archive "$zip" --output "$manifest"
+          gh release create "$tag" "$zip" "$manifest" \
             --target "$GITHUB_SHA" \
             --title "S3Drive $tag" \
             --notes-file "$notes" \

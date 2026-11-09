@@ -36,6 +36,11 @@ class S3DeletionWorkflowTests(unittest.TestCase):
         )
         self.assertIn("github.com/rclone/rclone/releases/download/", script)
         self.assertNotIn("beta.rclone.org", script)
+        self.assertIn("for ($attempt = 1; $attempt -le 3; $attempt++)", script)
+        self.assertIn("if ($attempt -eq 3)", script)
+        self.assertIn("Start-Sleep -Seconds", script)
+        self.assertIn("downloads.rclone.org/v$rcloneVersion/$rcloneZipName", script)
+        self.assertIn("$fallbackUrl", script)
 
     def test_no_integration_dependencies_in_user_package(self):
         requirements = (ROOT / "requirements.txt").read_text("utf-8")

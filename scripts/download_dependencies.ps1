@@ -17,8 +17,21 @@ New-Item -ItemType Directory -Force $tools | Out-Null
 $archive = Join-Path $tools $rcloneZipName
 $msi = Join-Path $tools $winfspInstallerName
 
-function Download-And-Verify([string]$url, [string]$target, [string]$expected) {
-    Invoke-WebRequest -Uri $url -OutFile $target
+function Download-And-Verify([string]$url, [string]$target, [string]$expected, [string]$fallbackUrl = "") {
+    # GitHub CDN can intermittently return HTTP 504. Retry only the download;
+    # keep the exact SHA-256 verification below unchanged.
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            $sourceUrl = if ($attempt -gt 1 -and $fallbackUrl) { $fallbackUrl } else { $url }
+            Invoke-WebRequest -Uri $sourceUrl -OutFile $target -TimeoutSec 60
+            break
+        } catch {
+            Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
+            if ($attempt -eq 3) { throw }
+            Write-Warning "Download failed ($attempt/3): $sourceUrl - $($_.Exception.Message)"
+            Start-Sleep -Seconds (2 * $attempt)
+        }
+    }
     if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
         throw "Missing dependency: $target"
     }
@@ -32,7 +45,8 @@ function Download-And-Verify([string]$url, [string]$target, [string]$expected) {
 
 Download-And-Verify `
     "https://github.com/rclone/rclone/releases/download/v$rcloneVersion/$rcloneZipName" `
-    $archive $rcloneExpectedSha256
+    $archive $rcloneExpectedSha256 `
+    "https://downloads.rclone.org/v$rcloneVersion/$rcloneZipName"
 Download-And-Verify `
     "https://github.com/winfsp/winfsp/releases/download/$winfspTag/$winfspInstallerName" `
     $msi $winfspExpectedSha256

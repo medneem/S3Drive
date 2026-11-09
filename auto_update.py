@@ -116,7 +116,7 @@ def _check_release_on_github_page(current_version: str, opener) -> UpdateInfo | 
         final_url = response.geturl()
     match = re.fullmatch(
         re.escape(RELEASE_PAGE_ROOT)
-        + r"(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)/?",
+        + r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)/?",
         final_url,
     )
     if match is None:

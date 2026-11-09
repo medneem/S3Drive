@@ -1,0 +1,49 @@
+name: Publish S3Drive v1.5.0 (one-shot)
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-once-v1.5.0.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    if: github.repository == 'medneem/S3Drive' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 88fa660b370493d12b5f4dca631352c45716eebc
+          fetch-depth: 0
+      - name: Publish verified v1.5.0 build from the successful release workflow
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="v1.5.0"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "::error::Release $tag already exists"
+            exit 1
+          fi
+          if gh api "repos/$GH_REPO/git/ref/tags/$tag" >/dev/null 2>&1; then
+            echo "::error::Git tag $tag already exists"
+            exit 1
+          fi
+          mkdir -p release
+          gh run download 42579101564 --repo "$GH_REPO" \
+            --name S3Drive-windows-x64-42579101564 --dir release
+          zip="release/S3Drive-v1.5.0-windows-x64.zip"
+          test -s "$zip"
+          test "$(unzip -p "$zip" VERSION.txt | tr -d '\r\n')" = "1.5.0"
+          python scripts/release_notes.py --version 1.5.0 \
+            --output release/RELEASE_NOTES.md
+          gh release create "$tag" "$zip" \
+            --target 88fa660b370493d12b5f4dca631352c45716eebc \
+            --title "S3Drive $tag" \
+            --notes-file release/RELEASE_NOTES.md \
+            --latest

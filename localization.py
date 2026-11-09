@@ -16,7 +16,7 @@ ENGLISH = {
     "Обновить": "Update",
     "Настройки": "Settings",
     "Проверять новую версию при запуске": "Check for new versions at startup",
-    "Проверить обновления": "Check for updates",
+    "Проверить обновление": "Check for updates",
     "Проверка обновлений…": "Checking for updates…",
     "Проверка обновлений уже выполняется.": "An update check is already running.",
     "Новых версий S3Drive нет.": "S3Drive is up to date.",

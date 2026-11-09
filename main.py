@@ -476,7 +476,7 @@ class MainWindow(QMainWindow):
         check_updates.setChecked(self.store.check_updates_on_startup)
         form.addRow(check_updates)
         layout.addLayout(form)
-        check_now = QPushButton(tr("Проверить обновления"))
+        check_now = QPushButton(tr("Проверить обновление"))
         check_now.clicked.connect(lambda: self.check_release(manual=True))
         layout.addWidget(check_now)
         buttons = QHBoxLayout()

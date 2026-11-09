@@ -18,7 +18,19 @@ $archive = Join-Path $tools $rcloneZipName
 $msi = Join-Path $tools $winfspInstallerName
 
 function Download-And-Verify([string]$url, [string]$target, [string]$expected) {
-    Invoke-WebRequest -Uri $url -OutFile $target
+    # GitHub CDN can intermittently return HTTP 504. Retry only the download;
+    # keep the exact SHA-256 verification below unchanged.
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $target -TimeoutSec 60
+            break
+        } catch {
+            Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
+            if ($attempt -eq 3) { throw }
+            Write-Warning "Download failed ($attempt/3): $url - $($_.Exception.Message)"
+            Start-Sleep -Seconds (2 * $attempt)
+        }
+    }
     if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
         throw "Missing dependency: $target"
     }

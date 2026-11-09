@@ -83,7 +83,7 @@ class ReleaseTests(unittest.TestCase):
         opener = Mock(side_effect=OSError("offline"))
         with self.assertRaises(OSError):
             check_latest_release("1.2.2", opener=opener)
-        opener.assert_called_once()
+        self.assertEqual(opener.call_count, 2)  # API and GitHub web page
 
     def test_api_timeout_uses_github_release_page_when_already_current(self):
         class Response(io.BytesIO):
@@ -301,6 +301,38 @@ class InstallationTests(unittest.TestCase):
                 self.assertEqual((root / "S3Drive.exe").read_bytes(), b"running")
 
 
+class ReleaseManifestTests(unittest.TestCase):
+    def test_manifest_contains_exact_official_download_and_sha256(self):
+        from scripts.release_manifest import make_manifest
+
+        payload = bundle_bytes(version="1.6.0")
+        with tempfile.TemporaryDirectory() as td:
+            archive = Path(td) / "S3Drive-v1.6.0-windows-x64.zip"
+            archive.write_bytes(payload)
+            manifest = make_manifest("1.6.0", archive)
+            self.assertEqual(manifest, release("1.6.0", hashlib.sha256(payload).hexdigest()) | {
+                "assets": [{
+                    "name": archive.name, "size": len(payload),
+                    "digest": "sha256:" + hashlib.sha256(payload).hexdigest(),
+                    "browser_download_url": (
+                        "https://github.com/medneem/S3Drive/releases/download/"
+                        "v1.6.0/S3Drive-v1.6.0-windows-x64.zip"
+                    ),
+                }],
+            })
+
+    def test_manifest_rejects_unexpected_archive_and_version(self):
+        from scripts.release_manifest import make_manifest
+
+        with tempfile.TemporaryDirectory() as td:
+            archive = Path(td) / "S3Drive-v1.6.0-windows-x64.zip"
+            archive.write_bytes(b"not a ZIP")
+            with self.assertRaises(ValueError):
+                make_manifest("1.6.1", archive)
+            with self.assertRaises(ValueError):
+                make_manifest("1.6.0-dev", archive)
+
+
 class PackagingTests(unittest.TestCase):
     def test_distribution_has_standalone_updater(self):
         workflow = (Path(__file__).resolve().parents[1] /
@@ -308,6 +340,8 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("--onefile --windowed --name S3DriveUpdater", workflow)
         self.assertIn('"S3DriveUpdater.exe"', workflow)
         self.assertIn("dist/S3DriveUpdater.exe", workflow)
+        self.assertIn("python scripts/release_manifest.py", workflow)
+        self.assertIn('gh release create "$tag" "$zip" "$manifest"', workflow)
 
 
 if __name__ == "__main__":

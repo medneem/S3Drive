@@ -394,7 +394,12 @@ class MainWindow(QMainWindow):
         self.available_release: UpdateInfo | None = None
         self.update_pool = QThreadPool(self)
         self.update_pool.setMaxThreadCount(1)
-        # Startup checks metadata only. No release file is downloaded without a click.
+        self._release_check_running = False
+        self._manual_release_check = False
+        # Retry a missed startup check; never download until Update is clicked.
+        self.release_check_timer = QTimer(self)
+        self.release_check_timer.timeout.connect(self.check_release_on_startup)
+        self.release_check_timer.start(5 * 60 * 1000)
         QTimer.singleShot(0, self.check_release_on_startup)
 
     def retranslate_ui(self) -> None:
@@ -450,7 +455,7 @@ class MainWindow(QMainWindow):
             self.status.setText(tr("Новый профиль. Заполните поля и нажмите «Сохранить»."))
 
     def open_settings(self) -> None:
-        """Save a portable language preference without changing S3 mounts."""
+        """Save UI settings independently from running S3 services."""
         if self.settings_load_error:
             QMessageBox.warning(self, "Ошибка config.json",
                                 "Сохранение заблокировано из-за ошибки чтения config.json. "
@@ -465,7 +470,13 @@ class MainWindow(QMainWindow):
         language.addItem("Русский", "ru")
         language.setCurrentIndex(language.findData(get_language()))
         form.addRow(tr("Язык интерфейса:"), language)
+        check_updates = QCheckBox(tr("Проверять новую версию при запуске"))
+        check_updates.setChecked(self.store.check_updates_on_startup)
+        form.addRow(check_updates)
         layout.addLayout(form)
+        check_now = QPushButton(tr("Проверить обновления"))
+        check_now.clicked.connect(lambda: self.check_release(manual=True))
+        layout.addWidget(check_now)
         buttons = QHBoxLayout()
         buttons.addStretch()
         cancel = QPushButton(tr("Отмена"))
@@ -478,32 +489,61 @@ class MainWindow(QMainWindow):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         selected = language.currentData()
-        if selected == self.store.language:
+        selected_checks = check_updates.isChecked()
+        previous_language = self.store.language
+        previous_checks = self.store.check_updates_on_startup
+        if selected == previous_language and selected_checks == previous_checks:
             return
-        previous = self.store.language
         try:
             self.store.language = selected
+            self.store.check_updates_on_startup = selected_checks
             self.store.save(self.profiles)
         except Exception as exc:
-            self.store.language = previous
-            QMessageBox.warning(self, "Не удалось сохранить язык интерфейса", str(exc))
+            self.store.language = previous_language
+            self.store.check_updates_on_startup = previous_checks
+            QMessageBox.warning(self, "Не удалось сохранить настройки", str(exc))
             return
-        set_language(selected)
-        self.retranslate_ui()
-        if self.transfer_popup is not None:
-            self.transfer_popup.retranslate_ui()
+        if selected != previous_language:
+            set_language(selected)
+            self.retranslate_ui()
+            if self.transfer_popup is not None:
+                self.transfer_popup.retranslate_ui()
 
     def check_release_on_startup(self) -> None:
-        """Show Update only when a newer stable GitHub Release is available."""
-        if not getattr(sys, "frozen", False):
+        """Check stable GitHub releases only when enabled and in the built app."""
+        if not self.store.check_updates_on_startup or not getattr(sys, "frozen", False):
             return
+        self.check_release(manual=False)
+
+    def check_release(self, *, manual: bool = False) -> None:
+        """Read GitHub metadata in a worker; manual checks ignore startup preference."""
+        if self._release_check_running:
+            if manual:
+                QMessageBox.information(self, "S3Drive", tr("Проверка обновлений уже выполняется."))
+            return
+        self._release_check_running = True
+        self._manual_release_check = manual
         task = _ReleaseCheckTask()
         task.signals.checked.connect(self.on_release_checked)
+        if manual:
+            self.statusBar().showMessage(tr("Проверка обновлений…"))
         self.update_pool.start(task)
 
     def on_release_checked(self, release: UpdateInfo | None, error: str) -> None:
-        # Network failures must never prevent normal offline use of S3Drive.
-        if error or release is None:
+        """Never silently swallow a manual check failure; automatic checks stay quiet."""
+        manual = self._manual_release_check
+        self._manual_release_check = False
+        self._release_check_running = False
+        if error:
+            self.statusBar().showMessage(
+                tr("Не удалось проверить обновления: {error}", error=error)
+            )
+            if manual:
+                QMessageBox.warning(self, tr("Не удалось проверить обновления"), error)
+            return
+        if release is None:
+            if manual:
+                QMessageBox.information(self, "S3Drive", tr("Новых версий S3Drive нет."))
             return
         self.available_release = release
         self.update_button.setToolTip(tr("Доступна S3Drive v{version}", version=release.version))
@@ -512,6 +552,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             tr("Доступна новая версия S3Drive v{version}. Нажмите «Обновить».", version=release.version)
         )
+        if manual:
+            QMessageBox.information(
+                self, "S3Drive", tr("Доступна S3Drive v{version}", version=release.version)
+            )
 
     def start_release_update(self) -> None:
         """User-requested download, never triggered automatically."""

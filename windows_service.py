@@ -20,7 +20,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from cache_ops import ensure_cache_idle, ensure_uploads_idle, erase_cache_directory
-from network_drive import network_volume_name
+from network_drive import network_volume_name, native_network_volume_prefix
 
 SERVICE_PREFIX = "S3Drive-"
 SERVICE_STOPPED = 1
@@ -167,7 +167,10 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
         "--vfs-write-back", "0s",
         # Prevent MSI installers from using the S3 account root for temporary
         # directories. UNC name is stable and different for each service.
-        "--network-mode", "--volname", network_volume_name(profile.id),
+        "--network-mode", "--volname", network_volume_name(profile.id, profile.name),
+        # Override WinFsp share with the complete user-visible name. The
+        # short --volname above remains a valid fallback for rclone 1.75.2.
+        "--fuse-flag", "--VolumePrefix=" + native_network_volume_prefix(profile.id, profile.name),
         # Refresh S3 directory listings instead of trusting stale VFS entries
         # during recursive deletes (same policy as ordinary user mounts).
         "--dir-cache-time", "0s",

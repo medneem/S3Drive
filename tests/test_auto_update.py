@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+from urllib.error import URLError
 import tempfile
 import unittest
 import zipfile
@@ -11,7 +12,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from auto_update import (
-    PAYLOAD_FILES, UpdateInfo, check_latest_release, launch_updater,
+    PAYLOAD_FILES, RELEASE_API, RELEASE_LATEST_PAGE, UpdateInfo, check_latest_release, launch_updater,
     parse_release, stage_update, verify_archive,
 )
 from update_helper import apply_bundle
@@ -83,6 +84,95 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaises(OSError):
             check_latest_release("1.2.2", opener=opener)
         opener.assert_called_once()
+
+    def test_api_timeout_uses_github_release_page_when_already_current(self):
+        class Response(io.BytesIO):
+            def geturl(self):
+                return "https://github.com/medneem/S3Drive/releases/tag/v1.5.0"
+
+        urls = []
+
+        def opener(request, *, timeout):
+            urls.append(request.full_url)
+            if request.full_url == RELEASE_API:
+                raise URLError("timed out")
+            if request.full_url == RELEASE_LATEST_PAGE:
+                return Response(b"GitHub release page")
+            self.fail("Unexpected URL: " + request.full_url)
+
+        self.assertIsNone(check_latest_release("1.5.0", opener=opener))
+        self.assertEqual(urls, [RELEASE_API, RELEASE_LATEST_PAGE])
+
+    def test_api_timeout_uses_release_manifest_for_newer_version(self):
+        data = release("1.6.0")
+        visited = []
+
+        class Response(io.BytesIO):
+            def __init__(self, body=b"", final_url=None):
+                super().__init__(body)
+                self.final_url = final_url
+
+            def geturl(self):
+                return self.final_url
+
+        def opener(request, *, timeout):
+            visited.append(request.full_url)
+            if request.full_url == RELEASE_API:
+                raise URLError("timed out")
+            if request.full_url == RELEASE_LATEST_PAGE:
+                return Response(final_url="https://github.com/medneem/S3Drive/releases/tag/v1.6.0")
+            if request.full_url.endswith("/v1.6.0/S3Drive-update.json"):
+                return Response(json.dumps(data).encode("utf-8"))
+            self.fail("Unexpected URL: " + request.full_url)
+
+        offered = check_latest_release("1.5.0", opener=opener)
+        self.assertEqual(offered.version, "1.6.0")
+        self.assertEqual(offered.digest, "a" * 64)
+        self.assertEqual(len(visited), 3)
+
+    def test_fallback_rejects_foreign_redirect_and_wrong_manifest_version(self):
+        class Response(io.BytesIO):
+            def __init__(self, body=b"", url=None):
+                super().__init__(body)
+                self.url = url
+
+            def geturl(self):
+                return self.url
+
+        for redirected in (
+            "https://attacker.invalid/medneem/S3Drive/releases/tag/v2.0.0",
+            "https://github.com/other/repo/releases/tag/v2.0.0",
+            "https://github.com/medneem/S3Drive/releases/tag/v2.0.0?redirect=1",
+        ):
+            def opener(request, *, timeout):
+                if request.full_url == RELEASE_API:
+                    raise URLError("timed out")
+                return Response(url=redirected)
+
+            with self.subTest(url=redirected), self.assertRaises(ValueError):
+                check_latest_release("1.5.0", opener=opener)
+
+        def opener(request, *, timeout):
+            if request.full_url == RELEASE_API:
+                raise URLError("timed out")
+            if request.full_url == RELEASE_LATEST_PAGE:
+                return Response(url="https://github.com/medneem/S3Drive/releases/tag/v1.6.0")
+            return Response(json.dumps(release("1.5.0")).encode())
+
+        with self.assertRaises(ValueError):
+            check_latest_release("1.5.0", opener=opener)
+
+    def test_api_valid_but_untrusted_digest_never_falls_back(self):
+        bad = release("1.6.0", digest="bad")
+        urls = []
+
+        def opener(request, *, timeout):
+            urls.append(request.full_url)
+            return io.BytesIO(json.dumps(bad).encode())
+
+        with self.assertRaises(ValueError):
+            check_latest_release("1.5.0", opener=opener)
+        self.assertEqual(urls, [RELEASE_API])
 
     def test_dev_build_does_not_even_contact_github(self):
         opener = Mock()

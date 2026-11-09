@@ -25,7 +25,7 @@ class ManualUpdateButtonTests(unittest.TestCase):
         self.assertIn("self.update_button.setVisible(False)", source)
         self.assertIn("self.update_button.clicked.connect(self.start_release_update)", source)
         self.assertIn("self.release_check_timer.timeout.connect(self.check_release_on_startup)", source)
-        self.assertIn('QPushButton(tr("Проверить обновления"))', inspect.getsource(MainWindow.open_settings))
+        self.assertIn('QPushButton(tr("Проверить обновление"))', inspect.getsource(MainWindow.open_settings))
         self.assertIn('QCheckBox(tr("Проверять новую версию при запуске"))', inspect.getsource(MainWindow.open_settings))
         self.assertNotIn("stage_update(", source)
 

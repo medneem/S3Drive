@@ -35,6 +35,7 @@ class LanguageTests(unittest.TestCase):
             store = self.store(path)
             self.assertEqual(store.load(), [])
             self.assertEqual(store.language, "en")
+            self.assertTrue(store.check_updates_on_startup)
 
     def test_new_config_writes_explicit_english_language(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -42,7 +43,39 @@ class LanguageTests(unittest.TestCase):
             store = self.store(path)
             self.assertEqual(store.load(), [])
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")),
-                             {"language": "en", "profiles": []})
+                             {"language": "en", "check_updates_on_startup": True, "profiles": []})
+
+    def test_update_preference_is_persisted_and_defaults_to_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            store = self.store(path)
+            self.assertTrue(store.check_updates_on_startup)
+            store.save([])
+            self.assertIs(json.loads(path.read_text())["check_updates_on_startup"], True)
+            store.check_updates_on_startup = False
+            store.save([])
+            second = self.store(path)
+            self.assertEqual(second.load(), [])
+            self.assertFalse(second.check_updates_on_startup)
+            second.language = "ru"
+            second.save([])
+            self.assertIs(json.loads(path.read_text())["check_updates_on_startup"], False)
+
+    def test_invalid_update_preference_does_not_overwrite_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            store = self.store(path)
+            store.save([])
+            before = path.read_bytes()
+            store.check_updates_on_startup = "false"
+            with self.assertRaises(ValueError):
+                store.save([])
+            self.assertEqual(path.read_bytes(), before)
+            document = json.loads(before)
+            document["check_updates_on_startup"] = "false"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                self.store(path).load()
 
     def test_russian_language_persists_and_survives_profile_updates(self):
         profile = new_profile(

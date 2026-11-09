@@ -151,7 +151,7 @@ class ManualUpdateButtonTests(unittest.TestCase):
         gui = SimpleNamespace(
             store=SimpleNamespace(check_updates_on_startup=False),
             _release_check_running=False, _manual_release_check=False,
-            update_pool=Mock(), statusBar=Mock(),
+            update_pool=Mock(), statusBar=Mock(), on_release_checked=Mock(),
         )
         MainWindow.check_release(gui, manual=True)
         gui.update_pool.start.assert_called_once()
@@ -206,7 +206,9 @@ class ManualUpdateButtonTests(unittest.TestCase):
             _release_check_running=True, update_button=Mock(),
             statusBar=Mock(),
         )
-        MainWindow.on_release_checked(gui, None, "")
+        with patch("main.QMessageBox") as message:
+            MainWindow.on_release_checked(gui, None, "")
+            message.information.assert_called_once()
         gui.update_button.setVisible.assert_not_called()
         self.assertFalse(gui._release_check_running)
 

@@ -105,6 +105,7 @@ class ProfileStore:
     ):
         self.path = path if path is not None else config_path()
         self.language = "en"
+        self.check_updates_on_startup = True
         self.encrypt = encrypt or dpapi_encrypt
         self.decrypt = decrypt or dpapi_decrypt
         self.legacy_path = (legacy_path if legacy_path is not None else
@@ -138,8 +139,12 @@ class ProfileStore:
             language = data.get("language", "en")
             if language not in ("en", "ru"):
                 raise ValueError("Unsupported interface language in config.json.")
+            check_updates = data.get("check_updates_on_startup", True)
+            if type(check_updates) is not bool:
+                raise ValueError("check_updates_on_startup must be true or false.")
             profiles = self._deserialize(data["profiles"])
             self.language = language
+            self.check_updates_on_startup = check_updates
             return profiles
 
         # Upgrade from earlier releases; never delete the old file.
@@ -155,6 +160,8 @@ class ProfileStore:
     def save(self, profiles: list[Profile]) -> None:
         if self.language not in ("en", "ru"):
             raise ValueError("Unsupported interface language.")
+        if type(self.check_updates_on_startup) is not bool:
+            raise ValueError("check_updates_on_startup must be true or false.")
         records = []
         seen_ids: set[str] = set()
         for profile in profiles:
@@ -170,7 +177,7 @@ class ProfileStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp = self.path.with_name(self.path.name + ".tmp")
         try:
-            temp.write_text(json.dumps({"language": self.language, "profiles": records}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            temp.write_text(json.dumps({"language": self.language, "check_updates_on_startup": self.check_updates_on_startup, "profiles": records}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             temp.replace(self.path)
         finally:
             temp.unlink(missing_ok=True)

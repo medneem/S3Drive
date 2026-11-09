@@ -66,7 +66,9 @@ The VFS write cache can hold data that has not yet reached S3. Use **Clear cache
 
 ## Updating S3Drive
 
-At launch, S3Drive checks stable releases in the background. When offline, an existing drive can still be used. **Update** is shown only when a newer stable release exists, and no update downloads automatically.
+By default, S3Drive checks for a newer stable GitHub Release at startup. In **Settings** you can disable **Check for new versions at startup** (saved in `config.json`), or click **Check for updates** whenever you want, even when automatic checks are disabled. A failed automatic check is retried once after five minutes (and again if still offline); manual check errors are shown in a dialog. Offline S3 mounts are unaffected. **Update** appears in the main window only when a newer release is found; nothing downloads automatically.
+
+The packaged rclone version is stable **1.76.0**, which fixes deletion of account-root buckets when S3 directory markers are enabled.
 
 After confirmation, S3Drive downloads and verifies the official release ZIP, closes safely, and launches S3DriveUpdater.exe. The updater preserves config.json, service-specific rclone binaries, and VFS caches. If a user background mount is active, the update can be postponed until it is safely disconnected.
 

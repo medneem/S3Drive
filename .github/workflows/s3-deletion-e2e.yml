@@ -10,6 +10,8 @@ on:
       - 'windows_service.py'
       - 'tests/test_core.py'
       - 'tests/test_windows_service.py'
+      - 'scripts/download_dependencies.ps1'
+      - 'network_drive.py'
   pull_request:
     paths:
       - '.github/workflows/s3-deletion-e2e.yml'
@@ -18,6 +20,8 @@ on:
       - 'windows_service.py'
       - 'tests/test_core.py'
       - 'tests/test_windows_service.py'
+      - 'scripts/download_dependencies.ps1'
+      - 'network_drive.py'
   workflow_dispatch:
 
 permissions:

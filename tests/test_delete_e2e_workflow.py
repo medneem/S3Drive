@@ -27,6 +27,16 @@ class S3DeletionWorkflowTests(unittest.TestCase):
         self.assertIn("mount_command(profile,", source)
         self.assertIn("127.0.0.1", source)
 
+    def test_rclone_pin_is_stable_and_checks_vendor_sha256(self):
+        script = (ROOT / "scripts" / "download_dependencies.ps1").read_text("utf-8")
+        self.assertIn('$rcloneVersion = "1.76.0"', script)
+        self.assertIn(
+            '$rcloneExpectedSha256 = "8B4FD2737ADE4E70C057EF4A49DEB7CFFE94B0FB9D7587C189D149823F21A1DC"',
+            script,
+        )
+        self.assertIn("github.com/rclone/rclone/releases/download/", script)
+        self.assertNotIn("beta.rclone.org", script)
+
     def test_no_integration_dependencies_in_user_package(self):
         requirements = (ROOT / "requirements.txt").read_text("utf-8")
         self.assertNotIn("moto", requirements)

@@ -398,8 +398,8 @@ class MainWindow(QMainWindow):
         self._manual_release_check = False
         # Retry a missed startup check; never download until Update is clicked.
         self.release_check_timer = QTimer(self)
+        self.release_check_timer.setSingleShot(True)
         self.release_check_timer.timeout.connect(self.check_release_on_startup)
-        self.release_check_timer.start(5 * 60 * 1000)
         QTimer.singleShot(0, self.check_release_on_startup)
 
     def retranslate_ui(self) -> None:
@@ -462,6 +462,8 @@ class MainWindow(QMainWindow):
                                 "Исправьте конфигурацию и перезапустите программу.")
             return
         dialog = QDialog(self)
+        self._manual_update_dialog = dialog
+        dialog.finished.connect(lambda: setattr(self, "_manual_update_dialog", None))
         dialog.setWindowTitle(tr("Настройки S3Drive"))
         layout = QVBoxLayout(dialog)
         form = QFormLayout()
@@ -498,6 +500,8 @@ class MainWindow(QMainWindow):
             self.store.language = selected
             self.store.check_updates_on_startup = selected_checks
             self.store.save(self.profiles)
+            if not selected_checks:
+                self.release_check_timer.stop()
         except Exception as exc:
             self.store.language = previous_language
             self.store.check_updates_on_startup = previous_checks
@@ -519,7 +523,8 @@ class MainWindow(QMainWindow):
         """Read GitHub metadata in a worker; manual checks ignore startup preference."""
         if self._release_check_running:
             if manual:
-                QMessageBox.information(self, "S3Drive", tr("Проверка обновлений уже выполняется."))
+                parent = getattr(self, "_manual_update_dialog", None) or self
+                QMessageBox.information(parent, "S3Drive", tr("Проверка обновлений уже выполняется."))
             return
         self._release_check_running = True
         self._manual_release_check = manual
@@ -539,11 +544,16 @@ class MainWindow(QMainWindow):
                 tr("Не удалось проверить обновления: {error}", error=error)
             )
             if manual:
-                QMessageBox.warning(self, tr("Не удалось проверить обновления"), error)
+                parent = getattr(self, "_manual_update_dialog", None) or self
+                QMessageBox.warning(parent, tr("Не удалось проверить обновления"), error)
+            elif self.store.check_updates_on_startup:
+                # Retry a transient offline startup check, never a failed manual check.
+                self.release_check_timer.start(5 * 60 * 1000)
             return
         if release is None:
             if manual:
-                QMessageBox.information(self, "S3Drive", tr("Новых версий S3Drive нет."))
+                parent = getattr(self, "_manual_update_dialog", None) or self
+                QMessageBox.information(parent, "S3Drive", tr("Новых версий S3Drive нет."))
             return
         self.available_release = release
         self.update_button.setToolTip(tr("Доступна S3Drive v{version}", version=release.version))
@@ -553,8 +563,9 @@ class MainWindow(QMainWindow):
             tr("Доступна новая версия S3Drive v{version}. Нажмите «Обновить».", version=release.version)
         )
         if manual:
+            parent = getattr(self, "_manual_update_dialog", None) or self
             QMessageBox.information(
-                self, "S3Drive", tr("Доступна S3Drive v{version}", version=release.version)
+                parent, "S3Drive", tr("Доступна S3Drive v{version}", version=release.version)
             )
 
     def start_release_update(self) -> None:

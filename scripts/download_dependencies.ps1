@@ -1,12 +1,12 @@
 # Bundled third-party dependencies pinned to exact official builds and SHA256 digests.
-# rclone beta is temporary: stable v1.75.2 cannot delete account-root buckets
-# with --s3-directory-markers (DeleteObject with an empty Key).
+# rclone v1.76.0 fixes removal of account-root buckets with
+# --s3-directory-markers: directory marker deletion requires a nonempty path.
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$rcloneVersion = "1.76.0-beta.10713.5c143c89b"
+$rcloneVersion = "1.76.0"
 $rcloneZipName = "rclone-v$rcloneVersion-windows-amd64.zip"
-$rcloneExpectedSha256 = "8A77D59BFDA59B4B9ADD7CDDB6D74516EACC01975E7B6D29DBD14818E2EBE549"
+$rcloneExpectedSha256 = "8B4FD2737ADE4E70C057EF4A49DEB7CFFE94B0FB9D7587C189D149823F21A1DC"
 $winfspTag = "v2.2B4"
 $winfspInstallerName = "winfsp-2.2.26215.msi"
 $winfspExpectedSha256 = "2ECB5C89405488A95BBD8A01875E02C48534FD37BBDFD84488F7590464D65944"
@@ -31,7 +31,7 @@ function Download-And-Verify([string]$url, [string]$target, [string]$expected) {
 }
 
 Download-And-Verify `
-    "https://beta.rclone.org/v$rcloneVersion/$rcloneZipName" `
+    "https://github.com/rclone/rclone/releases/download/v$rcloneVersion/$rcloneZipName" `
     $archive $rcloneExpectedSha256
 Download-And-Verify `
     "https://github.com/winfsp/winfsp/releases/download/$winfspTag/$winfspInstallerName" `

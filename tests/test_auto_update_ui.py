@@ -19,10 +19,12 @@ def release() -> UpdateInfo:
 
 
 class ManualUpdateButtonTests(unittest.TestCase):
-    def test_hidden_initially_with_no_unprompted_download(self):
+    def test_manual_check_is_visible_initially_with_no_unprompted_download(self):
         source = inspect.getsource(MainWindow.__init__)
-        self.assertIn('QPushButton(tr("Обновить"))', source)
-        self.assertIn("self.update_button.setVisible(False)", source)
+        self.assertIn('QPushButton(tr("Проверить обновления"))', source)
+        self.assertNotIn("self.update_button.setVisible(False)", source)
+        self.assertIn("self.update_button.clicked.connect(self.start_release_update)", source)
+        self.assertIn("self.release_check_timer.timeout.connect(self.check_release_on_startup)", source)
         self.assertIn("self.update_button.clicked.connect(self.start_release_update)", source)
         self.assertNotIn("stage_update(", source)
 
@@ -35,19 +37,18 @@ class ManualUpdateButtonTests(unittest.TestCase):
                 check.assert_called_once()
                 download.assert_not_called()
 
-    def test_button_appears_only_when_release_is_available(self):
+    def test_found_release_switches_check_button_to_update(self):
         status = Mock()
         gui = SimpleNamespace(
             available_release=None,
+            _manual_release_check=False,
+            _release_check_running=True,
             update_button=Mock(),
             statusBar=Mock(return_value=status),
         )
-        MainWindow.on_release_checked(gui, None, "")
-        MainWindow.on_release_checked(gui, None, "offline")
-        gui.update_button.setVisible.assert_not_called()
         MainWindow.on_release_checked(gui, release(), "")
         self.assertEqual(gui.available_release.version, "1.3.0")
-        gui.update_button.setVisible.assert_called_once_with(True)
+        gui.update_button.setText.assert_called_once_with("Update")
         gui.update_button.setEnabled.assert_called_once_with(True)
 
     def test_update_button_click_starts_only_download_worker(self):
@@ -138,12 +139,46 @@ class ManualUpdateButtonTests(unittest.TestCase):
                 app.instance.return_value.quit.assert_called_once()
             self.assertTrue(folder.exists())  # updater owns it after GUI exits
 
-    def test_click_does_nothing_if_no_release(self):
+    def test_click_without_release_checks_github_manually(self):
         gui = SimpleNamespace(
-            available_release=None, update_button=Mock(), update_pool=Mock(),
+            available_release=None, update_button=Mock(), check_release=Mock(),
         )
+        gui.update_button.isEnabled.return_value = True
         MainWindow.start_release_update(gui)
-        gui.update_pool.start.assert_not_called()
+        gui.check_release.assert_called_once_with(manual=True)
+
+    def test_user_is_told_when_manual_check_fails(self):
+        gui = SimpleNamespace(
+            available_release=None, _manual_release_check=True,
+            _release_check_running=True, update_button=Mock(),
+            statusBar=Mock(),
+        )
+        with patch("main.QMessageBox") as message:
+            MainWindow.on_release_checked(gui, None, "GitHub timeout")
+            message.warning.assert_called_once()
+        self.assertIn("GitHub timeout", gui.statusBar.return_value.showMessage.call_args.args[0])
+        gui.update_button.setEnabled.assert_called_once_with(True)
+
+    def test_automatic_check_failure_does_not_interrupt_user(self):
+        gui = SimpleNamespace(
+            available_release=None, _manual_release_check=False,
+            _release_check_running=True, update_button=Mock(),
+            statusBar=Mock(),
+        )
+        with patch("main.QMessageBox") as message:
+            MainWindow.on_release_checked(gui, None, "offline")
+            message.warning.assert_not_called()
+        gui.update_button.setEnabled.assert_called_once_with(True)
+
+    def test_no_new_release_keeps_manual_check_button(self):
+        gui = SimpleNamespace(
+            available_release=None, _manual_release_check=True,
+            _release_check_running=True, update_button=Mock(),
+            statusBar=Mock(),
+        )
+        MainWindow.on_release_checked(gui, None, "")
+        gui.update_button.setText.assert_called_once_with("Check for updates")
+        gui.update_button.setEnabled.assert_called_once_with(True)
 
 
 if __name__ == "__main__":

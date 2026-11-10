@@ -12,6 +12,7 @@ S3Drive is an open-source, portable Windows application that mounts S3-compatibl
 - S3-compatible HTTP(S) services including QNAP and MinIO.
 - Optional bucket: leave empty to mount the S3 account root. Accessible buckets appear as folders, provided the credentials have ListBuckets / s3:ListAllMyBuckets permission.
 - Windows network drive via WinFsp and rclone; custom volume name and a unique UNC path per mount.
+- Explorer uses the configured profile name without showing the private UNC server identifier in parentheses. S3Drive stores the network-drive display name under the current Windows user's Explorer MountPoints2 registry entry; the unique UNC path and network-drive semantics remain unchanged.
 - Windows service mode using LocalSystem, with Windows autostart. The drive can stay mounted independently of the GUI, including after a reboot.
 - Optional user background mode, which keeps a drive mounted after closing S3Drive. This mode does not auto-reconnect after reboot.
 - VFS writes cache, safe disconnect, and guarded cache cleanup that avoids discarding queued or unsent writes.

@@ -63,10 +63,8 @@ class NetworkMountTests(unittest.TestCase):
 
     def test_current_user_network_label_is_applied_only_to_own_unc(self):
         from drive_labels import install_explorer_network_label, network_label_registry_path
-        winreg = Mock(HKEY_CURRENT_USER=100, KEY_READ=1, KEY_WRITE=2, REG_SZ=1)
+        winreg = MagicMock(HKEY_CURRENT_USER=100, KEY_READ=1, KEY_WRITE=2, REG_SZ=1)
         winreg.QueryValueEx.side_effect = FileNotFoundError
-        winreg.CreateKeyEx.return_value.__enter__ = Mock(return_value=Mock())
-        winreg.CreateKeyEx.return_value.__exit__ = Mock(return_value=None)
         with patch.dict(sys.modules, {"winreg": winreg}):
             with patch("drive_labels.os.name", "nt"):
                 with patch("drive_labels.notify_explorer") as notify:

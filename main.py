@@ -22,7 +22,7 @@ from background import sessions_to_stop
 from drive_actions import (MountState, create_desktop_shortcut, disk_root,
                            mount_state, open_mounted_disk)
 from service_ui import run_admin
-from drive_labels import notify_explorer, read_native_volume_label
+from drive_labels import notify_explorer, read_native_volume_label, install_explorer_network_label
 from windows_service import service_status, SERVICE_RUNNING, SERVICE_STOPPED
 from startup import StartupStatus, ensure_winfsp
 from single_instance import SingleInstance
@@ -375,6 +375,14 @@ class MainWindow(QMainWindow):
         self.mount_timer = QTimer(self)
         self.mount_timer.timeout.connect(self.poll_mounts)
         self.mount_timer.start(500)
+
+        # The label is stored in the interactive user's HKCU, not the
+        # LocalSystem account running the Windows rclone service.
+        self._applied_network_labels: dict[str, str] = {}
+        self.label_timer = QTimer(self)
+        self.label_timer.timeout.connect(self.refresh_mounted_drive_labels)
+        self.label_timer.start(8000)
+        QTimer.singleShot(0, self.refresh_mounted_drive_labels)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_status)
@@ -859,6 +867,31 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Не удалось отключить диск", str(exc))
         self.update_status()
 
+    def refresh_mounted_drive_labels(self) -> None:
+        """Rename only active S3Drive UNC shares in the current user's Explorer.
+
+        A Windows service runs as LocalSystem, which has a different HKCU.
+        Reapply once when the GUI starts to cover services mounted at boot.
+        """
+        if os.name != "nt":
+            return
+        for profile in self.profiles:
+            if self._applied_network_labels.get(profile.id) == profile.name:
+                continue
+            active = (service_status(profile.id) == SERVICE_RUNNING
+                      or self.mounts.is_mounted(profile.id))
+            if not active or not os.path.isdir(disk_root(profile.drive)):
+                continue
+            try:
+                install_explorer_network_label(profile.id, profile.name)
+                self._applied_network_labels[profile.id] = profile.name
+            except OSError as exc:
+                self.statusBar().showMessage(
+                    tr("Не удалось обновить имя диска {drive}: {error}",
+                       drive=profile.drive, error=exc),
+                    8000,
+                )
+
     def poll_mounts(self) -> None:
         """Only notify and run optional actions once the drive appears in Explorer."""
         for profile_id, (profile, started_at) in list(self.pending_mounts.items()):
@@ -873,6 +906,7 @@ class MainWindow(QMainWindow):
                 continue
             self.pending_mounts.pop(profile_id, None)
             if state == MountState.READY:
+                self.refresh_mounted_drive_labels()
                 problems = []
                 if profile.create_shortcut:
                     try:

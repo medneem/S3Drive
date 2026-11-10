@@ -4,6 +4,10 @@ The network-drive mode also prevents MSI temp files in the S3 account root.
 """
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, Mock, patch
+import sys
+
 
 from mounts import mount_command
 from profiles import Profile
@@ -39,6 +43,86 @@ class NetworkMountTests(unittest.TestCase):
         self.assertNotEqual(a, b)
         self.assertEqual(a.rsplit("\\", 1)[1], "QNAP")
         self.assertEqual(b.rsplit("\\", 1)[1], "QNAP")
+
+    def test_registry_override_replaces_unc_suffix_with_profile_name(self):
+        from drive_labels import network_label_registry_path
+        self.assertEqual(
+            network_label_registry_path(self.FIRST, "Личный сетевой диск"),
+            (
+                "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MountPoints2"
+                "\\##s3d4ef5373cfc38#Личный сетевой диск"
+            ),
+        )
+        self.assertEqual(
+            network_label_registry_path(self.SECOND, "Яндекс"),
+            (
+                "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MountPoints2"
+                "\\##s3d640ee20c560e#Яндекс"
+            ),
+        )
+
+    def test_current_user_network_label_is_applied_only_to_own_unc(self):
+        from drive_labels import install_explorer_network_label, network_label_registry_path
+        winreg = MagicMock(HKEY_CURRENT_USER=100, KEY_READ=1, KEY_WRITE=2, REG_SZ=1)
+        winreg.QueryValueEx.side_effect = FileNotFoundError
+        with patch.dict(sys.modules, {"winreg": winreg}):
+            with patch("drive_labels.os.name", "nt"):
+                with patch("drive_labels.notify_explorer") as notify:
+                    changed = install_explorer_network_label(self.FIRST, "Личный сетевой диск")
+        self.assertTrue(changed)
+        self.assertEqual(
+            winreg.CreateKeyEx.call_args.args[1],
+            network_label_registry_path(self.FIRST, "Личный сетевой диск"),
+        )
+        self.assertEqual(winreg.CreateKeyEx.call_args.args[0], winreg.HKEY_CURRENT_USER)
+        self.assertEqual(
+            winreg.SetValueEx.call_args.args[1:],
+            ("_LabelFromReg", 0, winreg.REG_SZ, "Личный сетевой диск"),
+        )
+        notify.assert_called_once()
+
+    def test_existing_matching_label_is_untouched(self):
+        from drive_labels import install_explorer_network_label
+        winreg = MagicMock(HKEY_CURRENT_USER=100, KEY_READ=1, KEY_WRITE=2, REG_SZ=1)
+        winreg.QueryValueEx.return_value = ("Яндекс", winreg.REG_SZ)
+        with patch.dict(sys.modules, {"winreg": winreg}):
+            with patch("drive_labels.os.name", "nt"):
+                with patch("drive_labels.notify_explorer") as notify:
+                    changed = install_explorer_network_label(self.SECOND, "Яндекс")
+        self.assertFalse(changed)
+        winreg.SetValueEx.assert_not_called()
+        notify.assert_not_called()
+
+    def test_gui_repairs_labels_for_running_service_without_remount(self):
+        from main import MainWindow
+        p = profile(self.FIRST)
+        p.service_mode = True
+        gui = SimpleNamespace(
+            profiles=[p], mounts=Mock(), _applied_network_labels={},
+            statusBar=Mock(),
+        )
+        with patch("main.os.name", "nt"):
+            with patch("main.service_status", return_value=4):
+                with patch("main.os.path.isdir", return_value=True):
+                    with patch("main.install_explorer_network_label") as install:
+                        MainWindow.refresh_mounted_drive_labels(gui)
+                        MainWindow.refresh_mounted_drive_labels(gui)
+        install.assert_called_once_with(p.id, p.name)
+
+    def test_gui_does_not_label_disconnected_or_foreign_network_drives(self):
+        from main import MainWindow
+        p = profile(self.FIRST)
+        p.service_mode = False
+        gui = SimpleNamespace(
+            profiles=[p], mounts=Mock(), _applied_network_labels={},
+            statusBar=Mock(),
+        )
+        gui.mounts.is_mounted.return_value = False
+        with patch("main.os.name", "nt"):
+            with patch("main.service_status", return_value=None):
+                with patch("main.install_explorer_network_label") as install:
+                    MainWindow.refresh_mounted_drive_labels(gui)
+        install.assert_not_called()
 
     def test_short_rclone_fallback_never_splits_utf8(self):
         label = network_volume_name(self.FIRST, "Личный сетевой диск")

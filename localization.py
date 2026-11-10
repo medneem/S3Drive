@@ -22,6 +22,7 @@ ENGLISH = {
     "Новых версий S3Drive нет.": "S3Drive is up to date.",
     "Не удалось проверить обновления": "Unable to check for updates",
     "Не удалось проверить обновления: {error}": "Unable to check for updates: {error}",
+    "Не удалось обновить имя диска {drive}: {error}": "Unable to update drive {drive} label: {error}",
     "Не удалось сохранить настройки": "Could not save settings",
     "Настройки S3Drive": "S3Drive settings",
     "Язык интерфейса:": "Interface language:",

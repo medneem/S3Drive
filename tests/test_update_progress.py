@@ -66,6 +66,48 @@ class UpdateProgressTests(unittest.TestCase):
         self.assertNotIn("100%", button.setText.call_args.args[0])
         self.assertIn("SHA-256", button.setText.call_args.args[0])
 
+    def test_update_shutdown_restores_qt_quit_and_stops_gui_timers(self):
+        app = Mock()
+        button = Mock()
+        popup = SimpleNamespace()
+        timers = [Mock() for _ in range(5)]
+        gui = SimpleNamespace(
+            update_button=button, update_spinner=Mock(),
+            profiles=[], mounts=Mock(), close=Mock(return_value=True),
+            show=Mock(), _closing_for_update=False,
+            mount_timer=timers[0], label_timer=timers[1],
+            timer=timers[2], monitor_timer=timers[3],
+            release_check_timer=timers[4],
+        )
+        with patch("main.QApplication.instance", return_value=app):
+            with patch("main.launch_updater") as updater:
+                with patch("main.QTimer.singleShot") as defer:
+                    MainWindow.on_release_downloaded(gui, popup, "")
+        updater.assert_called_once()
+        gui.close.assert_called_once()
+        self.assertTrue(gui._closing_for_update)
+        app.setQuitOnLastWindowClosed.assert_any_call(False)
+        app.setQuitOnLastWindowClosed.assert_any_call(True)
+        defer.assert_called_once_with(0, app.quit)
+        for timer in timers:
+            timer.stop.assert_called_once()
+
+    def test_cancelled_close_never_launches_updater(self):
+        app = Mock()
+        gui = SimpleNamespace(
+            update_button=Mock(), update_spinner=Mock(),
+            profiles=[], mounts=Mock(), close=Mock(return_value=False),
+            _closing_for_update=False,
+        )
+        with patch("main.QApplication.instance", return_value=app):
+            with patch("main.launch_updater") as updater:
+                with patch("main.discard_update") as discard:
+                    MainWindow.on_release_downloaded(gui, SimpleNamespace(), "")
+        updater.assert_not_called()
+        discard.assert_called_once()
+        self.assertFalse(gui._closing_for_update)
+        app.setQuitOnLastWindowClosed.assert_any_call(True)
+
     def test_cannot_reopen_hidden_gui_when_update_is_finishing(self):
         from main import MainWindow
         gui = SimpleNamespace(_closing_for_update=True, isMinimized=Mock())

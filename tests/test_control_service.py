@@ -136,7 +136,7 @@ class ControlProtocolTests(unittest.TestCase):
         self.assertNotIn("S3DriveControl.exe", PAYLOAD_FILES)
         self.assertEqual(len(PAYLOAD_FILES), 11)
         self.assertIn("dist/S3DriveControl.exe", workflow)
-        self.assertIn("--include-data-files=dist/S3DriveControl.exe=S3DriveControl.exe", workflow)
+        self.assertIn("--include-data-files=dist/S3DriveControl-bundled.zip=S3DriveControl-bundled.zip", workflow)
         self.assertIn("service_control_host.py", workflow)
         gui = (root / "main.py").read_text("utf-8")
         self.assertIn("send_control", gui)

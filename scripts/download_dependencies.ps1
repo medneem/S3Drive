@@ -63,6 +63,9 @@ if ($LASTEXITCODE -ne 0) { throw "Bundled rclone.exe cannot start" }
 if ($rcloneReportedVersion[0] -notmatch [regex]::Escape($rcloneVersion)) {
     throw "Unexpected bundled rclone version: $($rcloneReportedVersion[0])"
 }
+# Hash the extracted EXE only after the official upstream ZIP is SHA-256 verified.
+$rcloneExeSha256 = (Get-FileHash -LiteralPath (Join-Path $tools "rclone.exe") -Algorithm SHA256).Hash
+Set-Content -LiteralPath (Join-Path $tools "rclone.sha256") -Value $rcloneExeSha256 -Encoding ascii
 Remove-Item $archive -Force
 Remove-Item $extract -Recurse -Force
 Write-Host "Bundled dependencies: rclone $rcloneVersion and WinFsp $winfspTag"

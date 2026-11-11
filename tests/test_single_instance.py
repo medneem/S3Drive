@@ -25,6 +25,38 @@ class MutexTests(unittest.TestCase):
             self.assertFalse(instance.acquired)
         kernel.CloseHandle.assert_called_once_with(456)
 
+    def test_first_instance_listens_for_activation_requests(self):
+        kernel = Mock()
+        kernel.CreateMutexW.return_value = 123
+        kernel.CreateEventW.return_value = 456
+        kernel.WaitForSingleObject.side_effect = [0x102, 0]
+        with SingleInstance(kernel32=kernel, get_last_error=lambda: 0) as instance:
+            self.assertFalse(instance.activation_requested())
+            self.assertTrue(instance.activation_requested())
+            kernel.CreateEventW.assert_called_once()
+        kernel.CloseHandle.assert_any_call(456)
+        kernel.CloseHandle.assert_any_call(123)
+
+    def test_duplicate_notifies_existing_window_without_taking_mutex(self):
+        kernel = Mock()
+        kernel.CreateMutexW.return_value = 123
+        kernel.OpenEventW.return_value = 789
+        with SingleInstance(kernel32=kernel, get_last_error=lambda: 183) as instance:
+            self.assertFalse(instance.acquired)
+            self.assertTrue(instance.request_activation())
+        kernel.SetEvent.assert_called_once_with(789)
+        kernel.CloseHandle.assert_any_call(789)
+        kernel.CloseHandle.assert_any_call(123)
+
+    def test_duplicate_still_rejected_if_activation_event_missing(self):
+        kernel = Mock()
+        kernel.CreateMutexW.return_value = 123
+        kernel.OpenEventW.return_value = 0
+        with SingleInstance(kernel32=kernel, get_last_error=lambda: 183) as instance:
+            self.assertFalse(instance.acquired)
+            self.assertFalse(instance.request_activation())
+        kernel.SetEvent.assert_not_called()
+
     def test_api_error_prevents_launch(self):
         kernel = Mock()
         kernel.CreateMutexW.return_value = 0

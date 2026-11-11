@@ -222,6 +222,52 @@ class ServiceTests(unittest.TestCase):
             for i in range(2):
                 self.assertEqual(acl.GetAce(i)[1], win32file.FILE_ALL_ACCESS)
 
+    def test_native_scm_create_start_stop_config_delete_without_sc_subprocess(self):
+        import sys
+        from unittest.mock import Mock
+        from windows_service import _sc
+
+        native = Mock()
+        native.SC_MANAGER_CONNECT = 1
+        native.SC_MANAGER_CREATE_SERVICE = 2
+        native.SERVICE_ALL_ACCESS = 0xF01FF
+        native.SERVICE_WIN32_OWN_PROCESS = 0x10
+        native.SERVICE_AUTO_START = 2
+        native.SERVICE_ERROR_NORMAL = 1
+        native.SERVICE_NO_CHANGE = 0xFFFFFFFF
+        native.SERVICE_CONTROL_STOP = 1
+        native.OpenSCManager.return_value = "scm"
+        native.CreateService.return_value = "created"
+        native.OpenService.return_value = "service"
+
+        name = "S3Drive-0123456789abcdef0123456789abcdef"
+        with patch.dict(sys.modules, {"win32service": native}):
+            with patch("windows_service.subprocess.run") as spawn:
+                _sc("create", name, "binPath=", "C:\\rclone.exe mount", "start=", "auto",
+                    "obj=", "LocalSystem", "DisplayName=", "S3Drive S:")
+                native.CreateService.assert_called_once()
+                self.assertEqual(native.CreateService.call_args.args[2], "S3Drive S:")
+                self.assertEqual(native.CreateService.call_args.args[7], "C:\\rclone.exe mount")
+                self.assertEqual(native.CreateService.call_args.args[10], "LocalSystem")
+                _sc("start", name)
+                native.StartService.assert_called_once_with("service", None)
+                _sc("stop", name)
+                native.ControlService.assert_called_once_with("service", 1)
+                _sc("config", name, "binPath=", "C:\\rclone.exe mount", "start=", "auto")
+                native.ChangeServiceConfig.assert_called_once()
+                self.assertEqual(native.ChangeServiceConfig.call_args.args[6], "C:\\rclone.exe mount")
+                _sc("delete", name)
+                native.DeleteService.assert_called_once_with("service")
+                spawn.assert_not_called()
+        self.assertEqual(native.CloseServiceHandle.call_count, 10)
+
+    def test_native_scm_rejects_unknown_operations_without_side_effects(self):
+        from windows_service import _sc
+        with self.assertRaises(ValueError):
+            _sc("run", "unexpected")
+        with self.assertRaises(ValueError):
+            _sc("create", "unexpected", "binPath=", "not-enough")
+
     def test_stop_fails_with_pending_uploads(self):
         with patch("windows_service._control_request", return_value={
             "inUse": 0,

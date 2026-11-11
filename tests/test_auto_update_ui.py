@@ -55,9 +55,11 @@ class ManualUpdateButtonTests(unittest.TestCase):
     def test_update_button_click_starts_only_download_worker(self):
         gui = SimpleNamespace(
             available_release=release(),
-            update_button=Mock(),
+            update_button=Mock(), update_spinner=Mock(),
+            _animate_update_spinner=Mock(),
             update_pool=Mock(),
             statusBar=Mock(),
+            on_release_progress=Mock(), on_release_verifying=Mock(),
             on_release_downloaded=Mock(),
         )
         gui.update_button.isEnabled.return_value = True
@@ -68,7 +70,7 @@ class ManualUpdateButtonTests(unittest.TestCase):
             self.assertEqual(worker.release.version, "1.3.0")
             download.assert_not_called()  # Worker queued, not run implicitly.
         gui.update_button.setEnabled.assert_called_once_with(False)
-        gui.update_button.setText.assert_called_once_with("Downloading…")
+        gui.update_button.setText.assert_called_once_with("Downloading… 0%")
 
     def test_cancelled_close_never_starts_updater(self):
         from auto_update import StagedUpdate
@@ -82,7 +84,7 @@ class ManualUpdateButtonTests(unittest.TestCase):
             archive.write_bytes(b"archive")
             staged = StagedUpdate(archive, "a" * 64, "1.3.0", folder)
             gui = SimpleNamespace(
-                update_button=Mock(), profiles=[], mounts=Mock(),
+                update_button=Mock(), update_spinner=Mock(), profiles=[], mounts=Mock(),
                 close=Mock(return_value=False), show=Mock(),
             )
             with patch("main.QApplication") as app, patch("main.launch_updater") as launch:
@@ -104,7 +106,7 @@ class ManualUpdateButtonTests(unittest.TestCase):
             archive.write_bytes(b"archive")
             staged = StagedUpdate(archive, "a" * 64, "1.3.0", folder)
             gui = SimpleNamespace(
-                update_button=Mock(),
+                update_button=Mock(), update_spinner=Mock(),
                 profiles=[SimpleNamespace(id="p1", drive="S:", keep_running=True)],
                 mounts=Mock(), close=Mock(),
             )
@@ -128,16 +130,20 @@ class ManualUpdateButtonTests(unittest.TestCase):
             archive.write_bytes(b"archive")
             staged = StagedUpdate(archive, "a" * 64, "1.3.0", folder)
             gui = SimpleNamespace(
-                update_button=Mock(),
+                update_button=Mock(), update_spinner=Mock(),
                 profiles=[SimpleNamespace(id="s1", drive="S:", keep_running=False,
                                          service_mode=True)],
                 mounts=Mock(), close=Mock(return_value=True), show=Mock(),
+                mount_timer=Mock(), label_timer=Mock(), timer=Mock(),
+                monitor_timer=Mock(), release_check_timer=Mock(),
             )
             with patch("main.QApplication") as app, patch("main.launch_updater") as launch:
-                MainWindow.on_release_downloaded(gui, staged, "")
-                gui.close.assert_called_once()
-                launch.assert_called_once()
-                app.instance.return_value.quit.assert_called_once()
+                with patch("main.QTimer.singleShot") as defer:
+                    MainWindow.on_release_downloaded(gui, staged, "")
+                    gui.close.assert_called_once()
+                    launch.assert_called_once()
+                    defer.assert_called_once_with(0, app.instance.return_value.quit)
+                    self.assertTrue(gui._closing_for_update)
             self.assertTrue(folder.exists())  # updater owns it after GUI exits
 
     def test_click_without_release_does_not_download(self):

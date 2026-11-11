@@ -29,7 +29,8 @@ USER_AGENT = "S3Drive-Desktop-Updater"
 MAX_ARCHIVE_BYTES = 300 * 1024 * 1024
 MAX_UNPACKED_BYTES = 600 * 1024 * 1024
 PAYLOAD_FILES = frozenset({
-    "S3Drive.exe", "S3DriveAdmin.exe", "S3DriveUpdater.exe", "rclone.exe",
+    "S3Drive.exe", "S3DriveAdmin.exe", "S3DriveControl.exe",
+    "S3DriveUpdater.exe", "rclone.exe",
     "winfsp-2.2.26215.msi", "README_SETUP.txt",
     "RCLONE_LICENSE.txt", "app-icon.png", "LICENSE",
     "THIRD_PARTY_NOTICES.md", "VERSION.txt",

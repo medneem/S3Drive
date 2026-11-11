@@ -1,20 +1,22 @@
-"""Fail-closed SHA-256 verification for the rclone shipped with S3Drive.
+"""Fail-closed integrity check for S3Drive's official bundled rclone.
 
-The manifest is generated from the binary in the pinned, SHA-256-verified
-upstream rclone archive. Both files ship inside the verified S3Drive ZIP.
+This SHA-256 is pinned for the upstream rclone v1.76.0 Windows amd64 EXE,
+obtained from the pinned, SHA-256-verified official ZIP in CI. New upstream
+versions require an explicit reviewed digest update.
 """
 from __future__ import annotations
 
 import hashlib
 import hmac
-import re
 from pathlib import Path
 
+RCLONE_VERSION = "1.76.0"
+RCLONE_SHA256 = "acd80683e23151e93bbe0d6ffa74d26e542ec510332f630beecb9944f8d1a623"
 _CHUNK_SIZE = 1024 * 1024
 
 
 def verify_rclone_hash(binary: Path, expected_sha256: str) -> None:
-    """Reject a missing or altered executable, including a staged copy."""
+    """Reject a missing or altered executable, including staged service copies."""
     if not binary.is_file():
         raise RuntimeError(f"rclone.exe не найден: {binary}")
     digest = hashlib.sha256()
@@ -29,19 +31,6 @@ def verify_rclone_hash(binary: Path, expected_sha256: str) -> None:
 
 
 def verify_bundled_rclone(binary: Path) -> str:
-    """Verify the paired bundled rclone and return its expected digest.
-
-    The sidecar is a consistency check inside the official release package,
-    not a digital signature or an antivirus verdict.
-    """
-    manifest = binary.with_name("rclone.sha256")
-    if not manifest.is_file():
-        raise RuntimeError("Отсутствует rclone.sha256. Распакуйте полный архив S3Drive.")
-    try:
-        expected = manifest.read_text(encoding="ascii").strip()
-    except (UnicodeError, OSError) as exc:
-        raise RuntimeError("Некорректный rclone.sha256 в архиве S3Drive.") from exc
-    if re.fullmatch(r"[0-9a-fA-F]{64}", expected) is None:
-        raise RuntimeError("Некорректный rclone.sha256 в архиве S3Drive.")
-    verify_rclone_hash(binary, expected)
-    return expected.lower()
+    """Verify the bundled rclone against its compiled-in official checksum."""
+    verify_rclone_hash(binary, RCLONE_SHA256)
+    return RCLONE_SHA256

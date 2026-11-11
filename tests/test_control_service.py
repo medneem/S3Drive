@@ -132,8 +132,11 @@ class ControlProtocolTests(unittest.TestCase):
         from auto_update import PAYLOAD_FILES
         root = Path(__file__).resolve().parents[1]
         workflow = (root / ".github/workflows/build-windows.yml").read_text("utf-8")
-        self.assertIn("S3DriveControl.exe", PAYLOAD_FILES)
+        # Existing v1.5.4 updater requires the original exact 11-file ZIP.
+        self.assertNotIn("S3DriveControl.exe", PAYLOAD_FILES)
+        self.assertEqual(len(PAYLOAD_FILES), 11)
         self.assertIn("dist/S3DriveControl.exe", workflow)
+        self.assertIn("--include-data-files=dist/S3DriveControl.exe=S3DriveControl.exe", workflow)
         self.assertIn("service_control_host.py", workflow)
         gui = (root / "main.py").read_text("utf-8")
         self.assertIn("send_control", gui)

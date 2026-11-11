@@ -93,6 +93,25 @@ class MutexTests(unittest.TestCase):
         self.assertEqual(child(), "1")
 
 
+    @unittest.skipUnless(os.name == "nt", "Windows named event integration")
+    def test_second_real_process_signals_first_gui_for_activation(self):
+        code = (
+            "from single_instance import SingleInstance\n"
+            "with SingleInstance() as instance:\n"
+            "    print(int(instance.acquired), int(instance.request_activation()))\n"
+        )
+        with SingleInstance() as first:
+            self.assertTrue(first.acquired)
+            first.enable_activation()
+            output = subprocess.run(
+                [sys.executable, "-c", code], text=True, capture_output=True,
+                timeout=15, check=True,
+            )
+            self.assertEqual(output.stdout.strip(), "0 1")
+            self.assertTrue(first.activation_requested())
+            self.assertFalse(first.activation_requested())
+
+
 class GUIStartupTests(unittest.TestCase):
     def test_second_launch_exits_before_win_fsp_check_and_main_window(self):
         import main as desktop

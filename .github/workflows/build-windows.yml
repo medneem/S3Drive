@@ -59,7 +59,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          python -m compileall -q rclone_integrity.py localization.py main.py auto_update.py update_helper.py profiles.py mounts.py background.py drive_labels.py windows_service.py service_admin.py service_ui.py single_instance.py dependencies.py startup.py version.py scripts tests
+          python -m compileall -q rclone_integrity.py localization.py main.py auto_update.py update_helper.py profiles.py mounts.py background.py drive_labels.py windows_service.py service_admin.py service_ui.py service_control.py service_control_installer.py service_control_host.py single_instance.py dependencies.py startup.py version.py scripts tests
           if ($LASTEXITCODE -ne 0) { throw "Python syntax checks failed" }
           for ($pass = 1; $pass -le 3; $pass++) {
             Write-Host "=== S3Drive test verification $pass/3 ==="
@@ -86,6 +86,11 @@ jobs:
           # Probe the packed EXE itself; no elevation, service edits or secrets.
           & ".\\dist\\S3DriveAdmin.exe" --self-test
           if ($LASTEXITCODE -ne 0) { throw "S3DriveAdmin.exe --self-test failed" }
+          python -m nuitka --onefile --msvc=latest --assume-yes-for-downloads --output-dir=dist --output-filename=S3DriveControl.exe --windows-console-mode=disable --windows-icon-from-ico=assets/app.ico --company-name=medneem --product-name=S3Drive --file-description="S3Drive - safe Windows service controller" "--file-version=$numeric" "--product-version=$numeric" service_control_host.py
+          if ($LASTEXITCODE -ne 0) { throw "S3DriveControl build failed" }
+          if (-not (Test-Path "dist/S3DriveControl.exe" -PathType Leaf)) { throw "Missing S3DriveControl.exe" }
+          & ".\\dist\\S3DriveControl.exe" --self-test
+          if ($LASTEXITCODE -ne 0) { throw "S3DriveControl.exe --self-test failed" }
           python -m PyInstaller --noconfirm --clean --onefile --windowed --name S3DriveUpdater --version-file windows_updater_version_info.txt --icon assets/app.ico update_helper.py
           if ($LASTEXITCODE -ne 0) { throw "S3DriveUpdater build failed" }
           if (-not (Test-Path "dist/S3DriveUpdater.exe" -PathType Leaf)) { throw "Missing S3DriveUpdater.exe" }
@@ -98,12 +103,13 @@ jobs:
           $descriptions = @{
             "S3Drive.exe" = "S3Drive - Windows S3 drive manager"
             "S3DriveAdmin.exe" = "S3Drive - Windows service administration"
+            "S3DriveControl.exe" = "S3Drive - safe Windows service controller"
             "S3DriveUpdater.exe" = "S3Drive - application updater"
           }
           foreach ($name in $descriptions.Keys) {
             $binary = Join-Path "dist" $name
             $info = (Get-Item -LiteralPath $binary).VersionInfo
-            $expectedProductVersion = if ($name -eq "S3DriveAdmin.exe") {
+            $expectedProductVersion = if ($name -in @("S3DriveAdmin.exe", "S3DriveControl.exe")) {
               (python -c "from scripts.stamp_version import _components; from version import APP_VERSION; print('.'.join(map(str, _components(APP_VERSION))))").Trim()
             } else { $version }
             if ($info.CompanyName -ne "medneem" -or $info.ProductName -ne "S3Drive" -or
@@ -131,6 +137,7 @@ jobs:
           New-Item -ItemType Directory -Force $folder | Out-Null
           Copy-Item "dist/S3Drive.exe" $folder
           Copy-Item "dist/S3DriveAdmin.exe" $folder
+          Copy-Item "dist/S3DriveControl.exe" $folder
           Copy-Item "dist/S3DriveUpdater.exe" $folder
           Copy-Item "tools/rclone.exe" $folder
           Copy-Item "tools/winfsp-2.2.26215.msi" $folder
@@ -140,7 +147,7 @@ jobs:
           Copy-Item "LICENSE" $folder
           Copy-Item "THIRD_PARTY_NOTICES.md" $folder
           Set-Content -Path (Join-Path $folder "VERSION.txt") -Value $version -Encoding utf8
-          $expected = @("S3Drive.exe", "S3DriveAdmin.exe", "S3DriveUpdater.exe", "rclone.exe", "winfsp-2.2.26215.msi", "README_SETUP.txt", "RCLONE_LICENSE.txt", "app-icon.png", "LICENSE", "THIRD_PARTY_NOTICES.md", "VERSION.txt")
+          $expected = @("S3Drive.exe", "S3DriveAdmin.exe", "S3DriveControl.exe", "S3DriveUpdater.exe", "rclone.exe", "winfsp-2.2.26215.msi", "README_SETUP.txt", "RCLONE_LICENSE.txt", "app-icon.png", "LICENSE", "THIRD_PARTY_NOTICES.md", "VERSION.txt")
           $files = @(Get-ChildItem -LiteralPath $folder -File)
           if (@(Get-ChildItem -LiteralPath $folder -Directory).Count -ne 0) { throw "Unexpected subfolders" }
           if ($files.Count -ne $expected.Count) { throw "Unexpected file count" }

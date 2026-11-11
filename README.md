@@ -19,8 +19,8 @@ S3Drive is an open-source, portable Windows application that mounts S3-compatibl
 - Separate S3 upload monitor showing pending and active uploads, file names, progress, speed, and remaining time. Windows Explorer handles download progress.
 - Optional desktop shortcut and opening the drive after a successful connection.
 - Access Key and Secret Key encrypted with Windows DPAPI in config.json.
-- Single-instance interface without a tray icon.
-- Update button appears when a newer stable GitHub Release is found. Downloads and installation require an explicit click; the official archive is SHA-256 verified.
+- Single-instance interface without a tray icon. A duplicate launch cannot start a second GUI; it asks the existing window to restore and come forward (Windows-session mutex and activation event).
+- Update button appears when a newer stable GitHub Release is found. Downloads and installation require an explicit click; the official archive is SHA-256 verified. While downloading, the Update button shows a rotating spinner and percentage based on bytes received, followed by a distinct SHA-256 verification state.
 - English and Russian interface and setup documentation.
 
 ## Requirements
@@ -91,7 +91,7 @@ By default, S3Drive checks for a newer stable GitHub Release at startup. In **Se
 
 The packaged rclone version is stable **1.76.0**, which fixes deletion of account-root buckets when S3 directory markers are enabled.
 
-After confirmation, S3Drive downloads and verifies the official release ZIP, closes safely, and launches S3DriveUpdater.exe. The updater preserves config.json, service-specific rclone binaries, and VFS caches. If a user background mount is active, the update can be postponed until it is safely disconnected.
+After confirmation, S3Drive downloads and verifies the official release ZIP, closes safely, and launches S3DriveUpdater.exe. The GUI restores Qt's normal last-window shutdown setting and schedules a clean quit before the updater waits for the old PID to exit. If an update fails, the window is shown again. The updater preserves config.json, service-specific rclone binaries, and VFS caches. If a user background mount is active, the update can be postponed until it is safely disconnected.
 
 Older S3Drive distributions without S3DriveUpdater.exe require extracting a full new ZIP manually while preserving config.json.
 

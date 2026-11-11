@@ -98,7 +98,6 @@ jobs:
           Copy-Item "dist/S3DriveAdmin.exe" $folder
           Copy-Item "dist/S3DriveUpdater.exe" $folder
           Copy-Item "tools/rclone.exe" $folder
-          Copy-Item "tools/rclone.sha256" $folder
           Copy-Item "tools/winfsp-2.2.26215.msi" $folder
           Copy-Item "README_SETUP.txt" $folder
           Copy-Item "third_party/RCLONE_LICENSE.txt" (Join-Path $folder "RCLONE_LICENSE.txt")
@@ -106,7 +105,7 @@ jobs:
           Copy-Item "LICENSE" $folder
           Copy-Item "THIRD_PARTY_NOTICES.md" $folder
           Set-Content -Path (Join-Path $folder "VERSION.txt") -Value $version -Encoding utf8
-          $expected = @("S3Drive.exe", "S3DriveAdmin.exe", "S3DriveUpdater.exe", "rclone.exe", "rclone.sha256", "winfsp-2.2.26215.msi", "README_SETUP.txt", "RCLONE_LICENSE.txt", "app-icon.png", "LICENSE", "THIRD_PARTY_NOTICES.md", "VERSION.txt")
+          $expected = @("S3Drive.exe", "S3DriveAdmin.exe", "S3DriveUpdater.exe", "rclone.exe", "winfsp-2.2.26215.msi", "README_SETUP.txt", "RCLONE_LICENSE.txt", "app-icon.png", "LICENSE", "THIRD_PARTY_NOTICES.md", "VERSION.txt")
           $files = @(Get-ChildItem -LiteralPath $folder -File)
           if (@(Get-ChildItem -LiteralPath $folder -Directory).Count -ne 0) { throw "Unexpected subfolders" }
           if ($files.Count -ne $expected.Count) { throw "Unexpected file count" }

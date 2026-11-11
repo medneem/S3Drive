@@ -255,7 +255,7 @@ class ServiceTests(unittest.TestCase):
                 native.ControlService.assert_called_once_with("service", 1)
                 _sc("config", name, "binPath=", "C:\\rclone.exe mount", "start=", "auto")
                 native.ChangeServiceConfig.assert_called_once()
-                self.assertEqual(native.ChangeServiceConfig.call_args.args[6], "C:\\rclone.exe mount")
+                self.assertEqual(native.ChangeServiceConfig.call_args.args[4], "C:\\rclone.exe mount")
                 _sc("delete", name)
                 native.DeleteService.assert_called_once_with("service")
                 spawn.assert_not_called()

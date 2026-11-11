@@ -56,7 +56,8 @@ class RcloneIntegrityTests(unittest.TestCase):
         from mounts import find_rclone
         with patch("mounts.__file__", str(self.root / "mounts.py")):
             with patch("mounts.sys.frozen", False, create=True):
-                self.assertEqual(find_rclone(), str(self.binary))
+                # Windows may canonicalize RUNNER~1 into runneradmin.
+                self.assertTrue(Path(find_rclone()).samefile(self.binary))
                 self.binary.unlink()
                 with self.assertRaisesRegex(RuntimeError, "rclone.exe"):
                     find_rclone()

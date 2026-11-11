@@ -19,6 +19,11 @@ from windows_service import (
 )
 
 
+def bundled_broker_archive() -> Path:
+    """Nuitka onefile data lives beside __file__, not the portable config."""
+    return Path(__file__).resolve().parent / "S3DriveControl-bundled.zip"
+
+
 def run_action(action: str, profile_id: str, owner_sid: str | None = None) -> None:
     import uuid
     uuid.UUID(profile_id)
@@ -28,7 +33,7 @@ def run_action(action: str, profile_id: str, owner_sid: str | None = None) -> No
         if owner_sid is None:
             raise ValueError("Требуется SID текущего пользователя S3Drive.")
         validate_owner_sid(owner_sid)
-        install_control_service(config_path().parent / "S3DriveControl.exe")
+        install_control_service(bundled_broker_archive())
         if action == "install":
             # DPAPI user scope: an alternate administrator account may fail to
             # decrypt the original user's profile; never pass keys on argv.
@@ -65,9 +70,14 @@ def portable_config_probe(executable: Path) -> bool:
 
 
 def main() -> int:
-    # CI-only packaging probe: no UAC, no service changes or config reads.
+    # CI packaging probe: no UAC, no service changes or config reads.
     if len(sys.argv) == 2 and sys.argv[1] == "--self-test":
-        return 0 if portable_config_probe(Path(sys.argv[0])) else 2
+        import zipfile
+        archive = bundled_broker_archive()
+        if not portable_config_probe(Path(sys.argv[0])) or not archive.is_file():
+            return 2
+        with zipfile.ZipFile(archive) as packaged:
+            return 0 if packaged.namelist() == ["S3DriveControl.exe"] else 2
     try:
         if len(sys.argv) not in (3, 4):
             raise ValueError(

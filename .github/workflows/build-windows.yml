@@ -28,7 +28,7 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.13"
+          python-version: "3.13.17"
           cache: pip
           cache-dependency-path: |
             requirements.txt
@@ -74,12 +74,35 @@ jobs:
           python -m PyInstaller --noconfirm --clean --onefile --windowed --name S3Drive --version-file windows_version_info.txt --icon assets/app.ico --add-data "assets/app.svg;assets" main.py
           if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
           if (-not (Test-Path "dist/S3Drive.exe" -PathType Leaf)) { throw "Missing S3Drive.exe" }
-          python -m PyInstaller --noconfirm --clean --onefile --console --name S3DriveAdmin service_admin.py
+          python -m PyInstaller --noconfirm --clean --onefile --console --name S3DriveAdmin --version-file windows_admin_version_info.txt --icon assets/app.ico service_admin.py
           if ($LASTEXITCODE -ne 0) { throw "S3DriveAdmin build failed" }
           if (-not (Test-Path "dist/S3DriveAdmin.exe" -PathType Leaf)) { throw "Missing S3DriveAdmin.exe" }
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name S3DriveUpdater update_helper.py
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name S3DriveUpdater --version-file windows_updater_version_info.txt --icon assets/app.ico update_helper.py
           if ($LASTEXITCODE -ne 0) { throw "S3DriveUpdater build failed" }
           if (-not (Test-Path "dist/S3DriveUpdater.exe" -PathType Leaf)) { throw "Missing S3DriveUpdater.exe" }
+
+      - name: Verify EXE metadata and record SHA-256
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = (python -c "from version import APP_VERSION; print(APP_VERSION)").Trim()
+          $descriptions = @{
+            "S3Drive.exe" = "S3Drive - Windows S3 drive manager"
+            "S3DriveAdmin.exe" = "S3Drive - Windows service administration"
+            "S3DriveUpdater.exe" = "S3Drive - application updater"
+          }
+          foreach ($name in $descriptions.Keys) {
+            $binary = Join-Path "dist" $name
+            $info = (Get-Item -LiteralPath $binary).VersionInfo
+            if ($info.CompanyName -ne "medneem" -or $info.ProductName -ne "S3Drive" -or
+                $info.ProductVersion -ne $version -or $info.OriginalFilename -ne $name -or
+                $info.FileDescription -ne $descriptions[$name]) {
+              throw "Incorrect Windows VERSIONINFO for $name"
+            }
+            $sha256 = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+            Write-Host "$name SHA256: $sha256"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "$name SHA256: $sha256"
+          }
 
       - name: Download and verify bundled dependencies
         shell: pwsh

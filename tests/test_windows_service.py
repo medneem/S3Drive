@@ -293,15 +293,14 @@ class ServiceTests(unittest.TestCase):
         from windows_service import install_and_start
         profile = sample()
         with patch("windows_service.service_status", return_value=SERVICE_STOPPED), \
+             patch("windows_service._can_fast_start", return_value=True), \
              patch("windows_service.check_drive_free"), \
              patch("windows_service._sc") as control, \
              patch("windows_service.protect_directory") as protect, \
-             patch("windows_service.verify_bundled_rclone") as verify, \
              patch("windows_service.install_explorer_label") as label:
             install_and_start(profile, Path("C:/S3Drive/rclone.exe"))
         control.assert_called_once_with("start", service_name(profile.id))
         protect.assert_not_called()
-        verify.assert_not_called()
         label.assert_not_called()
 
     def test_service_stop_allowed_with_vfs_baseline_in_use_one(self):

@@ -27,12 +27,23 @@ monitor remains visible while the GUI is closed. Disconnect safely from
 S3Drive before replacing files that the background mount may be using.
 
 WINDOWS SERVICE MODE
-Use Run as Windows service, click Save, then Connect and approve UAC.
-The LocalSystem service starts with Windows; the drive remains available
-even when the GUI is closed. Stop it with Stop service and drive. Once it
-is stopped, Remove service keeps the saved connection profile intact.
-An app update does not automatically replace a running service's
-rclone.exe or configuration. Wait for uploads before reconnecting.
+Enable Run as Windows service, click Save, then Connect. On first setup
+approve UAC once: it registers a protected LocalSystem S3DriveControl
+service and the S3 disk service. The disk remains visible with the GUI
+closed and can automatically start after Windows boot.
+Subsequent Connect / Stop service and drive operations do not require
+UAC. S3DriveControl identifies the calling Windows user and only allows
+start/stop for profiles explicitly enrolled by an administrator. It checks
+rclone's pending uploads before stopping and refuses unsafe shutdown.
+On upgrades from earlier releases, the first Connect / Stop may request
+one-time UAC to register the existing service; protected files and cache
+are kept. Changed S3 settings, removing a service or clearing the
+protected VFS cache still require UAC. Do not stop rclone via Windows
+Services or sc.exe: those tools bypass S3Drive's upload checks.
+An app update does not automatically replace installed rclone.exe,
+config, or running controller. S3DriveControl is embedded in
+S3DriveAdmin.exe and installed in protected ProgramData on first setup.
+This preserves the original 11-file ZIP layout for older updaters.
 Service-mounted drives may be accessible to other local Windows users.
 
 SECURITY AND CONFIGURATION
@@ -140,13 +151,20 @@ WinFsp 2026 Beta4 (v2.2B4) — тестовая ветка со свежими �
 
 РЕЖИМ СЛУЖБЫ WINDOWS
 - Включите «Запускать как службу Windows (доступно в Проводнике)».
-- Нажмите «Сохранить», затем «Подключить» и подтвердите UAC.
-- После установки служба стартует автоматически при загрузке Windows,
-  диск должен появляться в Проводнике даже при закрытой S3Drive.
-- Нажмите «Остановить службу и диск», чтобы корректно отключить диск.
-- Нажмите «Удалить службу» после её остановки, если больше не нужна.
-- Системная служба запускается как LocalSystem: доступ к диску может быть
-  предоставлен другим локальным пользователям ПК.
+- Нажмите «Сохранить», затем «Подключить»: подтвердите UAC только при
+  первой установке системного компонента S3DriveControl и службы диска.
+- Повторное подключение и безопасная остановка диска работают без UAC.
+- S3DriveControl проверяет SID вызывающего пользователя, разрешает только
+  запуск/остановку зарегистрированного для него диска и перед остановкой
+  проверяет незавершённые загрузки в rclone. RC-пароль не выдаётся GUI.
+- После обновления со старой версии потребуется один раз подтвердить UAC
+  для регистрации уже существующей службы. Кэш и ключи не удаляются.
+- Изменение параметров службы, удаление и очистка защищённого кэша по-
+  прежнему требуют UAC.
+- При загрузке Windows служба диска работает как LocalSystem, даже если
+  окно S3Drive закрыто. Диск может быть доступен другим пользователям ПК.
+- Не останавливайте службу через оснастку «Службы» / sc.exe: они не
+  проверяют очередь загрузки и могут привести к потере данных.
 
 ВАЖНО ПРИ ОБНОВЛЕНИИ СЛУЖБЫ:
 Если служба была установлена предыдущей версией S3Drive, её параметры

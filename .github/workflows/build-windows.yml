@@ -59,7 +59,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          python -m compileall -q rclone_integrity.py localization.py main.py auto_update.py update_helper.py profiles.py mounts.py background.py drive_labels.py windows_service.py service_admin.py service_ui.py single_instance.py dependencies.py startup.py version.py scripts tests
+          python -m compileall -q rclone_integrity.py localization.py main.py auto_update.py update_helper.py profiles.py mounts.py background.py drive_labels.py windows_service.py service_admin.py service_ui.py service_control.py service_control_installer.py service_control_host.py single_instance.py dependencies.py startup.py version.py scripts tests
           if ($LASTEXITCODE -ne 0) { throw "Python syntax checks failed" }
           for ($pass = 1; $pass -le 3; $pass++) {
             Write-Host "=== S3Drive test verification $pass/3 ==="
@@ -76,14 +76,20 @@ jobs:
           python -m PyInstaller --noconfirm --clean --onefile --windowed --name S3Drive --version-file windows_version_info.txt --icon assets/app.ico --add-data "assets/app.svg;assets" main.py
           if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
           if (-not (Test-Path "dist/S3Drive.exe" -PathType Leaf)) { throw "Missing S3Drive.exe" }
-          # Build the elevated helper without the PyInstaller bootloader. Keep
-          # onefile distribution and the existing explicit UAC behavior.
+          # Both admin and SCM controller are native onefile binaries. The
+          # controller is embedded as data in Admin so releases keep the exact
+          # original 11-file ZIP (needed by v1.5.4's strict updater).
           $numeric = (python -c "from scripts.stamp_version import _components; from version import APP_VERSION; print('.'.join(map(str, _components(APP_VERSION))))").Trim()
           if ($LASTEXITCODE -ne 0) { throw "Unable to read executable version" }
-          python -m nuitka --onefile --msvc=latest --assume-yes-for-downloads --output-dir=dist --output-filename=S3DriveAdmin.exe --windows-console-mode=disable --windows-icon-from-ico=assets/app.ico --company-name=medneem --product-name=S3Drive --file-description="S3Drive - Windows service administration" "--file-version=$numeric" "--product-version=$numeric" service_admin.py
+          python -m nuitka --onefile --msvc=latest --assume-yes-for-downloads --output-dir=dist --output-filename=S3DriveControl.exe --windows-console-mode=disable --windows-icon-from-ico=assets/app.ico --company-name=medneem --product-name=S3Drive --file-description="S3Drive - safe Windows service controller" "--file-version=$numeric" "--product-version=$numeric" service_control_host.py
+          if ($LASTEXITCODE -ne 0) { throw "S3DriveControl build failed" }
+          if (-not (Test-Path "dist/S3DriveControl.exe" -PathType Leaf)) { throw "Missing S3DriveControl.exe" }
+          & ".\\dist\\S3DriveControl.exe" --self-test
+          if ($LASTEXITCODE -ne 0) { throw "S3DriveControl.exe --self-test failed" }
+          Compress-Archive -LiteralPath "dist/S3DriveControl.exe" -DestinationPath "dist/S3DriveControl-bundled.zip" -CompressionLevel Optimal -Force
+          python -m nuitka --onefile --msvc=latest --assume-yes-for-downloads --output-dir=dist --output-filename=S3DriveAdmin.exe --windows-console-mode=disable --windows-icon-from-ico=assets/app.ico --company-name=medneem --product-name=S3Drive --file-description="S3Drive - Windows service administration" "--file-version=$numeric" "--product-version=$numeric" --include-data-files=dist/S3DriveControl-bundled.zip=S3DriveControl-bundled.zip service_admin.py
           if ($LASTEXITCODE -ne 0) { throw "Native S3DriveAdmin build failed" }
           if (-not (Test-Path "dist/S3DriveAdmin.exe" -PathType Leaf)) { throw "Missing S3DriveAdmin.exe" }
-          # Probe the packed EXE itself; no elevation, service edits or secrets.
           & ".\\dist\\S3DriveAdmin.exe" --self-test
           if ($LASTEXITCODE -ne 0) { throw "S3DriveAdmin.exe --self-test failed" }
           python -m PyInstaller --noconfirm --clean --onefile --windowed --name S3DriveUpdater --version-file windows_updater_version_info.txt --icon assets/app.ico update_helper.py
@@ -98,12 +104,13 @@ jobs:
           $descriptions = @{
             "S3Drive.exe" = "S3Drive - Windows S3 drive manager"
             "S3DriveAdmin.exe" = "S3Drive - Windows service administration"
+            "S3DriveControl.exe" = "S3Drive - safe Windows service controller"
             "S3DriveUpdater.exe" = "S3Drive - application updater"
           }
           foreach ($name in $descriptions.Keys) {
             $binary = Join-Path "dist" $name
             $info = (Get-Item -LiteralPath $binary).VersionInfo
-            $expectedProductVersion = if ($name -eq "S3DriveAdmin.exe") {
+            $expectedProductVersion = if ($name -in @("S3DriveAdmin.exe", "S3DriveControl.exe")) {
               (python -c "from scripts.stamp_version import _components; from version import APP_VERSION; print('.'.join(map(str, _components(APP_VERSION))))").Trim()
             } else { $version }
             if ($info.CompanyName -ne "medneem" -or $info.ProductName -ne "S3Drive" -or
@@ -114,6 +121,43 @@ jobs:
             $sha256 = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
             Write-Host "$name SHA256: $sha256"
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "$name SHA256: $sha256"
+          }
+
+      - name: Smoke test protected control service under Windows SCM
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = "S3DriveControl"
+          $bin = (Resolve-Path "dist/S3DriveControl.exe").Path
+          $created = $false
+          try {
+            if (Get-Service -Name $name -ErrorAction SilentlyContinue) {
+              throw "Unexpected S3DriveControl service already installed on runner"
+            }
+            New-Service -Name $name -BinaryPathName ('"' + $bin + '"') -DisplayName "S3Drive CI control broker" -StartupType Manual | Out-Null
+            $created = $true
+            Start-Service -Name $name -ErrorAction Stop
+            $service = Get-Service -Name $name
+            if ($service.Status -ne "Running") { throw "S3DriveControl failed to run as Windows service" }
+            # Deliberately unknown profile: broker MUST reject it, but the
+            # client must receive a real response from the pipe over Windows IPC.
+            @'
+          from types import SimpleNamespace
+          from service_control import send_control, EnrollmentRequired
+          try:
+              send_control("stop", SimpleNamespace(id="12345678-1234-1234-1234-123456789abc"))
+          except EnrollmentRequired:
+              print("Windows SCM + SID-authenticated named pipe handshake OK")
+          else:
+              raise AssertionError("Unenrolled profile was accepted")
+          '@ | python -
+            if ($LASTEXITCODE -ne 0) { throw "Broker named-pipe handshake failed" }
+          } finally {
+            if ($created) {
+              Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
+              & sc.exe delete $name | Out-Host
+              if ($LASTEXITCODE -ne 0) { throw "Unable to remove CI test service" }
+            }
           }
 
       - name: Download and verify bundled dependencies

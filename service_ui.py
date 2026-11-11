@@ -14,7 +14,7 @@ def helper_executable() -> Path:
 
 def run_admin(action: str, profile_id: str, wait_ms: int = 90000) -> None:
     """An explicit GUI click is required before calling this function."""
-    if action not in ("install", "stop", "remove", "clear-cache"):
+    if action not in ("install", "setup-control", "stop", "remove", "clear-cache"):
         raise ValueError("Недопустимое действие службы.")
     import uuid
     uuid.UUID(profile_id)
@@ -28,10 +28,15 @@ def run_admin(action: str, profile_id: str, wait_ms: int = 90000) -> None:
     helper = helper_executable()
     if not helper.is_file():
         raise FileNotFoundError("S3DriveAdmin.exe отсутствует. Распакуйте полный архив.")
+    parameters = action + " " + profile_id
+    if action in ("install", "setup-control"):
+        from service_control import current_user_sid
+        parameters += " " + current_user_sid()
+
     proc = shell.ShellExecuteEx(
         fMask=shellcon.SEE_MASK_NOCLOSEPROCESS,
         lpVerb="runas", lpFile=str(helper),
-        lpParameters=action + " " + profile_id,
+        lpParameters=parameters,
         lpDirectory=str(helper.parent), nShow=win32con.SW_HIDE,
     )
     handle = proc["hProcess"]

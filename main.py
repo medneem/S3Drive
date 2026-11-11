@@ -698,6 +698,8 @@ class MainWindow(QMainWindow):
         for timer in (self.mount_timer, self.label_timer, self.timer,
                       self.monitor_timer, self.release_check_timer):
             timer.stop()
+        if hasattr(self, "activation_timer"):
+            self.activation_timer.stop()
         if application is not None:
             # Restore the Qt default; otherwise a hidden window can leave
             # the GUI process holding its single-instance mutex.

@@ -22,6 +22,10 @@ from background import sessions_to_stop
 from drive_actions import (MountState, create_desktop_shortcut, disk_root,
                            mount_state, open_mounted_disk)
 from service_ui import run_admin
+from service_control import (
+    ControlUnavailable, EnrollmentRequired, ReconfigurationRequired,
+    send_control,
+)
 from drive_labels import notify_explorer, read_native_volume_label, install_explorer_network_label
 from windows_service import service_status, SERVICE_RUNNING, SERVICE_STOPPED
 from startup import StartupStatus, ensure_winfsp
@@ -915,7 +919,23 @@ class MainWindow(QMainWindow):
                 if service_status(profile.id) == SERVICE_RUNNING:
                     QMessageBox.information(self, "S3Drive", "Служба уже запущена.")
                     return
-                run_admin("install", profile.id)
+                state = service_status(profile.id)
+                if state is None:
+                    # First installation: UAC only once, configure protected
+                    # LocalSystem broker and enroll the interactive user SID.
+                    run_admin("install", profile.id)
+                elif state == SERVICE_STOPPED:
+                    try:
+                        send_control("start", profile)
+                    except (ControlUnavailable, EnrollmentRequired):
+                        # One-time migration of services installed before v1.5.5.
+                        run_admin("setup-control", profile.id)
+                        send_control("start", profile)
+                    except ReconfigurationRequired:
+                        # Updating protected rclone settings still requires UAC.
+                        run_admin("install", profile.id)
+                else:
+                    raise RuntimeError("Служба меняет состояние. Повторите попытку.")
                 notify_explorer()
                 self.pending_mounts[profile.id] = (profile, time.monotonic())
                 self.status.setText(tr("Подключение службы и диска {drive}…", drive=profile.drive))
@@ -943,7 +963,12 @@ class MainWindow(QMainWindow):
                 if state == SERVICE_STOPPED:
                     QMessageBox.information(self, "S3Drive", "Служба уже остановлена.")
                 else:
-                    run_admin("stop", profile.id)
+                    try:
+                        send_control("stop", profile)
+                    except (ControlUnavailable, EnrollmentRequired):
+                        # Existing installation needs a one-time UAC migration.
+                        run_admin("setup-control", profile.id)
+                        send_control("stop", profile)
                     notify_explorer()
             else:
                 self.mounts.stop(profile.id)

@@ -36,6 +36,33 @@ class VersioningTests(unittest.TestCase):
         self.assertIn("filevers=(1, 0, 0, 0)", metadata)
         self.assertIn("ProductVersion', '1.0.0'", metadata)
 
+    def test_admin_and_updater_have_distinct_windows_version_resources(self):
+        for executable in ("S3DriveAdmin", "S3DriveUpdater"):
+            with self.subTest(executable=executable):
+                info = windows_version_info("1.5.4", executable=executable)
+                self.assertIn(f"OriginalFilename', '{executable}.exe'", info)
+                self.assertIn(f"InternalName', '{executable}'", info)
+                self.assertIn("CompanyName', 'medneem'", info)
+                self.assertIn("ProductVersion', '1.5.4'", info)
+
+    def test_ci_pins_known_good_windows_packaging_dependencies(self):
+        root = Path(__file__).resolve().parents[1]
+        build = (root / "requirements-build.txt").read_text("utf-8")
+        requirements = (root / "requirements.txt").read_text("utf-8")
+        self.assertIn("pyinstaller==6.22.3", build.lower())
+        self.assertIn("pyinstaller-hooks-contrib==2026.9", build.lower())
+        self.assertIn("pillow==12.3.0", build.lower())
+        self.assertIn("pyside6==6.12.0", requirements.lower())
+        self.assertIn("pywin32==312", requirements.lower())
+
+    def test_ci_embeds_and_reports_all_three_exe_versions_and_hashes(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github" /
+                    "workflows" / "build-windows.yml").read_text("utf-8")
+        self.assertIn("--name S3DriveAdmin --version-file windows_admin_version_info.txt", workflow)
+        self.assertIn("--name S3DriveUpdater --version-file windows_updater_version_info.txt", workflow)
+        self.assertIn("Get-FileHash", workflow)
+        self.assertIn("GITHUB_STEP_SUMMARY", workflow)
+
     def test_ci_builds_only_onefile_windows_archive(self):
         workflow = (Path(__file__).resolve().parents[1] / ".github" /
                     "workflows" / "build-windows.yml").read_text(encoding="utf-8")
@@ -54,6 +81,8 @@ class VersioningTests(unittest.TestCase):
             self.assertEqual(version, "1.0.0")
             self.assertIn('APP_VERSION = "1.0.0"', (root / "version.py").read_text(encoding="utf-8"))
             self.assertIn("filevers=(1, 0, 0, 0)", (root / "windows_version_info.txt").read_text(encoding="utf-8"))
+            self.assertIn("S3DriveAdmin.exe", (root / "windows_admin_version_info.txt").read_text(encoding="utf-8"))
+            self.assertIn("S3DriveUpdater.exe", (root / "windows_updater_version_info.txt").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

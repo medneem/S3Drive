@@ -52,11 +52,14 @@ def current_user_sid() -> str:
     import win32con
     import win32security
 
-    with win32security.OpenProcessToken(
+    token = win32security.OpenProcessToken(
         win32api.GetCurrentProcess(), win32con.TOKEN_QUERY
-    ) as token:
+    )
+    try:
         sid, _ = win32security.GetTokenInformation(token, win32security.TokenUser)
         return validate_owner_sid(win32security.ConvertSidToStringSid(sid))
+    finally:
+        token.Close()
 
 
 def config_fingerprint(profile) -> str:
@@ -173,13 +176,16 @@ def _client_sid(pipe) -> str:
     # accidentally treat an unauthenticated caller as itself.
     win32security.ImpersonateNamedPipeClient(pipe)
     try:
-        with win32security.OpenThreadToken(
+        token = win32security.OpenThreadToken(
             win32api.GetCurrentThread(), win32con.TOKEN_QUERY, True
-        ) as token:
+        )
+        try:
             sid, _ = win32security.GetTokenInformation(
                 token, win32security.TokenUser
             )
             return validate_owner_sid(win32security.ConvertSidToStringSid(sid))
+        finally:
+            token.Close()
     finally:
         win32security.RevertToSelf()
 

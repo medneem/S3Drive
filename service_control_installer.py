@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import os
-import shutil
 import time
+import zipfile
 from pathlib import Path
 
 from windows_service import protect_directory, protect_file, service_executable_dir
@@ -12,17 +12,21 @@ CONTROL_EXE = "S3DriveControl.exe"
 CONTROL_SERVICE = "S3DriveControl"
 
 
-def install_control_service(source: Path) -> None:
-    """Create the protected LocalSystem broker once; do not overwrite a running EXE."""
+def install_control_service(source_archive: Path) -> None:
+    """Install the embedded broker from Admin's verified onefile data archive.
+
+    Keeping the broker inside S3DriveAdmin preserves the exact 11-file ZIP
+    contract required by the updater in already installed S3Drive v1.5.4.
+    """
     if os.name != "nt":
         raise OSError("Службы доступны только в Windows.")
     import pywintypes
     import win32service
     import win32serviceutil
 
-    if source.is_symlink() or not source.is_file():
-        raise FileNotFoundError("S3DriveControl.exe отсутствует в папке приложения.")
-    source = source.resolve()
+    if source_archive.is_symlink() or not source_archive.is_file():
+        raise FileNotFoundError("В S3DriveAdmin.exe отсутствует компонент службы управления.")
+    source_archive = source_archive.resolve()
     base = service_executable_dir()
     protect_directory(base.parent)
     protect_directory(base)
@@ -41,7 +45,20 @@ def install_control_service(source: Path) -> None:
         if target.is_symlink() or temporary.is_symlink():
             raise RuntimeError("Недопустимая ссылка вместо системного компонента.")
         try:
-            shutil.copy2(source, temporary)
+            with zipfile.ZipFile(source_archive) as bundle:
+                members = bundle.infolist()
+                if (len(members) != 1
+                        or members[0].filename != CONTROL_EXE
+                        or members[0].is_dir()
+                        or not 0 < members[0].file_size <= 128 * 1024 * 1024):
+                    raise ValueError("Некорректный пакет системного компонента.")
+                with bundle.open(members[0]) as incoming, temporary.open("wb") as output:
+                    size = 0
+                    while chunk := incoming.read(1024 * 1024):
+                        size += len(chunk)
+                        if size > 128 * 1024 * 1024:
+                            raise ValueError("Слишком большой пакет системного компонента.")
+                        output.write(chunk)
             protect_file(temporary)
             os.replace(temporary, target)
             protect_file(target)

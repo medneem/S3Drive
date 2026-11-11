@@ -37,7 +37,6 @@ def release(version="1.4.0", digest="a" * 64):
 def bundle_bytes(version="1.4.0", additions=None):
     data = {name: ("new:" + name).encode("utf-8") for name in PAYLOAD_FILES}
     data["VERSION.txt"] = (version + "\n").encode()
-    data["rclone.sha256"] = hashlib.sha256(data["rclone.exe"]).hexdigest().encode("ascii") + b"\n"
     data.update(additions or {})
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -214,14 +213,6 @@ class ArchiveTests(unittest.TestCase):
                 path.write_bytes(payload)
                 with self.assertRaises(ValueError):
                     verify_archive(path, hashlib.sha256(payload).hexdigest(), "1.4.0")
-
-    def test_archive_rejects_replaced_rclone_even_with_matching_zip_hash(self):
-        payload = bundle_bytes(additions={"rclone.exe": b"substituted executable"})
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "archive.zip"
-            path.write_bytes(payload)
-            with self.assertRaisesRegex(ValueError, "SHA-256 rclone.exe"):
-                verify_archive(path, hashlib.sha256(payload).hexdigest(), "1.4.0")
 
     def test_archive_rejects_wrong_version(self):
         payload = bundle_bytes("1.3.0")

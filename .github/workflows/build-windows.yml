@@ -46,6 +46,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-build.txt
+          python -m pip install -r requirements-admin-build.txt
 
       - name: Stamp application version
         shell: pwsh
@@ -74,9 +75,16 @@ jobs:
           python -m PyInstaller --noconfirm --clean --onefile --windowed --name S3Drive --version-file windows_version_info.txt --icon assets/app.ico --add-data "assets/app.svg;assets" main.py
           if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
           if (-not (Test-Path "dist/S3Drive.exe" -PathType Leaf)) { throw "Missing S3Drive.exe" }
-          python -m PyInstaller --noconfirm --clean --onefile --console --name S3DriveAdmin --version-file windows_admin_version_info.txt --icon assets/app.ico service_admin.py
-          if ($LASTEXITCODE -ne 0) { throw "S3DriveAdmin build failed" }
+          # Build the elevated helper without the PyInstaller bootloader. Keep
+          # onefile distribution and the existing explicit UAC behavior.
+          $numeric = (python -c "from scripts.stamp_version import _components; from version import APP_VERSION; print('.'.join(map(str, _components(APP_VERSION))))").Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Unable to read executable version" }
+          python -m nuitka --onefile --msvc=latest --assume-yes-for-downloads --output-dir=dist --output-filename=S3DriveAdmin.exe --windows-console-mode=disable --windows-icon-from-ico=assets/app.ico --company-name=medneem --product-name=S3Drive --file-description="S3Drive - Windows service administration" "--file-version=$numeric" "--product-version=$numeric" service_admin.py
+          if ($LASTEXITCODE -ne 0) { throw "Native S3DriveAdmin build failed" }
           if (-not (Test-Path "dist/S3DriveAdmin.exe" -PathType Leaf)) { throw "Missing S3DriveAdmin.exe" }
+          # Probe the packed EXE itself; no elevation, service edits or secrets.
+          & ".\\dist\\S3DriveAdmin.exe" --self-test
+          if ($LASTEXITCODE -ne 0) { throw "S3DriveAdmin.exe --self-test failed" }
           python -m PyInstaller --noconfirm --clean --onefile --windowed --name S3DriveUpdater --version-file windows_updater_version_info.txt --icon assets/app.ico update_helper.py
           if ($LASTEXITCODE -ne 0) { throw "S3DriveUpdater build failed" }
           if (-not (Test-Path "dist/S3DriveUpdater.exe" -PathType Leaf)) { throw "Missing S3DriveUpdater.exe" }
@@ -94,8 +102,11 @@ jobs:
           foreach ($name in $descriptions.Keys) {
             $binary = Join-Path "dist" $name
             $info = (Get-Item -LiteralPath $binary).VersionInfo
+            $expectedProductVersion = if ($name -eq "S3DriveAdmin.exe") {
+              (python -c "from scripts.stamp_version import _components; from version import APP_VERSION; print('.'.join(map(str, _components(APP_VERSION))))").Trim()
+            } else { $version }
             if ($info.CompanyName -ne "medneem" -or $info.ProductName -ne "S3Drive" -or
-                $info.ProductVersion -ne $version -or $info.OriginalFilename -ne $name -or
+                $info.ProductVersion -ne $expectedProductVersion -or $info.OriginalFilename -ne $name -or
                 $info.FileDescription -ne $descriptions[$name]) {
               throw "Incorrect Windows VERSIONINFO for $name"
             }

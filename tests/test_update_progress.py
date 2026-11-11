@@ -7,17 +7,21 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+import zipfile
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from auto_update import stage_update, UpdateInfo
+from auto_update import PAYLOAD_FILES, stage_update, UpdateInfo
 from main import MainWindow
 
 
 class UpdateProgressTests(unittest.TestCase):
     def test_report_actual_download_percentage_and_verification_phase(self):
-        from tests.test_auto_update import bundle_bytes
-        data = bundle_bytes()
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for name in PAYLOAD_FILES:
+                archive.writestr(name, "1.4.0\n" if name == "VERSION.txt" else "test")
+        data = stream.getvalue()
         total = len(data)
         info = UpdateInfo("1.4.0", "https://example.invalid/update.zip",
                           hashlib.sha256(data).hexdigest(), total)
@@ -42,11 +46,11 @@ class UpdateProgressTests(unittest.TestCase):
                               _downloading_update=True)
         try:
             set_language("en")
-            MainWindow.on_release_progress(gui, 63)
+            MainWindow.on_release_progress(gui, 63, 100)
             self.assertIn("63%", button.setText.call_args.args[0])
             self.assertIn("63%", status.showMessage.call_args.args[0])
             set_language("ru")
-            MainWindow.on_release_progress(gui, 94)
+            MainWindow.on_release_progress(gui, 94, 100)
             self.assertIn("94%", button.setText.call_args.args[0])
             self.assertIn("94%", status.showMessage.call_args.args[0])
         finally:

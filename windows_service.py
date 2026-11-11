@@ -21,6 +21,7 @@ from urllib.request import Request, urlopen
 
 from cache_ops import ensure_cache_idle, ensure_uploads_idle, erase_cache_directory
 from network_drive import network_volume_name, native_network_volume_prefix
+from rclone_integrity import verify_bundled_rclone, verify_rclone_hash
 
 SERVICE_PREFIX = "S3Drive-"
 SERVICE_STOPPED = 1
@@ -348,8 +349,8 @@ def install_and_start(profile, source_rclone: Path) -> None:
     if installed == SERVICE_RUNNING:
         raise RuntimeError("Служба уже запущена. Для изменения настроек остановите её.")
     check_drive_free(profile.drive)
-    if not source_rclone.is_file():
-        raise FileNotFoundError("Рядом с S3Drive отсутствует rclone.exe.")
+    # Refuse an altered dependency before writing protected service files.
+    expected_sha256 = verify_bundled_rclone(source_rclone)
     root = Path(os.environ["PROGRAMDATA"]) / "S3Drive"
     protect_directory(root)
     protect_directory(root / "services")
@@ -364,6 +365,7 @@ def install_and_start(profile, source_rclone: Path) -> None:
     staged = dest / "rclone.exe.new"
     try:
         shutil.copy2(source_rclone, staged)
+        verify_rclone_hash(staged, expected_sha256)
         protect_file(staged)
         os.replace(staged, binary)
     finally:

@@ -29,7 +29,27 @@ S3Drive is an open-source, portable Windows application that mounts S3-compatibl
 - WinFsp driver. The release ZIP contains the WinFsp installer; S3Drive offers to install it if missing.
 - S3-compatible credentials and endpoint, and permission to create config.json beside S3Drive.exe.
 
-rclone.exe is bundled with the portable ZIP.
+rclone.exe is bundled with the portable ZIP. S3Drive pins the SHA-256 of
+the official Windows rclone 1.76.0 executable and verifies it before launching
+a drive or copying the binary into a Windows service. The Windows CI checks
+this digest against the executable extracted from the checksum-verified
+upstream archive. Missing or modified rclone is rejected; S3Drive does not
+fall back to an unrelated `rclone.exe` on `PATH`.
+
+### Antivirus detections
+
+`S3DriveAdmin.exe` is a PyInstaller-packaged elevated helper that creates
+Windows services and protects their executable/configuration files under
+ProgramData. Behavior-based products such as Kaspersky may flag this activity
+as `PDM:Trojan.Win32.Generic`; this is not by itself proof of either infection
+or a false positive. The upstream rclone executable may be flagged separately
+as `Backdoor.Win64.Freyja.bc`. Keep antivirus protection enabled, preserve its
+event report, and do not restore or execute quarantined files until reviewed.
+Check the full official S3Drive Release ZIP and hashes, and submit both
+samples and detection logs to [Kaspersky OpenTIP](https://opentip.kaspersky.com/)
+or Kaspersky technical support for independent analysis. A release hash or
+successful unit test is not an antivirus verdict. Code signing is recommended
+for future releases, but requires a genuine publisher certificate.
 
 ## Installation and first use
 

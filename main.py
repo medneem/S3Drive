@@ -334,7 +334,7 @@ class MainWindow(QMainWindow):
         self.service_checkbox = QCheckBox(tr("Запускать как службу Windows (доступно в Проводнике)"))
         self.service_checkbox.setToolTip(tr(
             "Реальная служба LocalSystem с автозапуском Windows. "
-            "Установка и остановка службы требуют подтверждения UAC."
+            "Установка и изменение настроек требуют UAC; обычный запуск и безопасная остановка — без UAC."
         ))
         fields.addRow("", self.service_checkbox)
         self.service_checkbox.toggled.connect(
@@ -453,7 +453,7 @@ class MainWindow(QMainWindow):
         self.service_checkbox.setText(tr("Запускать как службу Windows (доступно в Проводнике)"))
         self.service_checkbox.setToolTip(tr(
             "Реальная служба LocalSystem с автозапуском Windows. "
-            "Установка и остановка службы требуют подтверждения UAC."
+            "Установка и изменение настроек требуют UAC; обычный запуск и безопасная остановка — без UAC."
         ))
         for button, caption in (
             (self.add_button, "Новый"),

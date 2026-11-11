@@ -704,6 +704,15 @@ class MainWindow(QMainWindow):
             application.setQuitOnLastWindowClosed(True)
             QTimer.singleShot(0, application.quit)
 
+    def bind_single_instance(self, instance: SingleInstance) -> None:
+        """Listen only while the existing GUI is alive; never create another."""
+        self.activation_timer = QTimer(self)
+        self.activation_timer.timeout.connect(
+            lambda: self.activate_existing_window()
+            if instance.activation_requested() else None
+        )
+        self.activation_timer.start(250)
+
     def activate_existing_window(self) -> None:
         """A duplicate launch restores the one permitted GUI window."""
         if self._closing_for_update:
@@ -1293,13 +1302,12 @@ def main() -> int:
         app.setWindowIcon(app_icon())
         window = MainWindow()
         window.show()
-        instance.enable_activation()
-        activation_timer = QTimer(window)
-        activation_timer.timeout.connect(
-            lambda: window.activate_existing_window()
-            if instance.activation_requested() else None
-        )
-        activation_timer.start(250)
+        try:
+            instance.enable_activation()
+            window.bind_single_instance(instance)
+        except OSError:
+            # The mutex still prevents a second GUI if focus signalling fails.
+            pass
         return app.exec()
 
 

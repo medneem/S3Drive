@@ -5,7 +5,6 @@ import base64
 import json
 import os
 import secrets
-import shutil
 import socket
 import sys
 import subprocess
@@ -18,6 +17,7 @@ from profiles import Profile, app_data_dir
 from background import BackgroundRecord, BackgroundRegistry
 from cache_ops import ensure_cache_idle, ensure_uploads_idle, erase_cache_directory
 from network_drive import network_volume_name, native_network_volume_prefix
+from rclone_integrity import verify_bundled_rclone
 
 REMOTE = "s3drive_mount"
 
@@ -77,12 +77,10 @@ def find_rclone() -> str:
     app_dir = (Path(sys.executable).resolve().parent if getattr(sys, "frozen", False)
                else Path(__file__).resolve().parent)
     alongside = app_dir / "rclone.exe"
-    if alongside.is_file():
-        return str(alongside)
-    resolved = shutil.which("rclone.exe") or shutil.which("rclone")
-    if resolved:
-        return resolved
-    raise FileNotFoundError("Не найден rclone.exe. Установите rclone или положите его рядом с S3Drive.exe.")
+    # Never use an unrelated executable from PATH if the bundled one was
+    # quarantined, removed or altered.
+    verify_bundled_rclone(alongside)
+    return str(alongside)
 
 
 def free_local_port() -> int:

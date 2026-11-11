@@ -29,7 +29,7 @@ MAX_ARCHIVE_BYTES = 300 * 1024 * 1024
 MAX_UNPACKED_BYTES = 600 * 1024 * 1024
 PAYLOAD_FILES = frozenset({
     "S3Drive.exe", "S3DriveAdmin.exe", "S3DriveUpdater.exe", "rclone.exe",
-    "rclone.sha256", "winfsp-2.2.26215.msi", "README_SETUP.txt",
+    "winfsp-2.2.26215.msi", "README_SETUP.txt",
     "RCLONE_LICENSE.txt", "app-icon.png", "LICENSE",
     "THIRD_PARTY_NOTICES.md", "VERSION.txt",
 })
@@ -181,17 +181,6 @@ def verify_archive(path: Path, digest: str, version: str) -> None:
         actual_version = archive.read("VERSION.txt").decode("utf-8-sig").strip()
         if actual_version != version:
             raise ValueError("Версия в архиве не совпадает с версией релиза.")
-        # The outer release ZIP is verified; now reject mismatched inner
-        # rclone binaries as well, before the updater replaces any files.
-        expected_rclone = archive.read("rclone.sha256").strip()
-        if re.fullmatch(rb"[0-9a-fA-F]{64}", expected_rclone) is None:
-            raise ValueError("Некорректный rclone.sha256 в архиве обновления.")
-        rclone_digest = hashlib.sha256()
-        with archive.open("rclone.exe") as exe:
-            while chunk := exe.read(1024 * 1024):
-                rclone_digest.update(chunk)
-        if rclone_digest.hexdigest() != expected_rclone.decode("ascii").lower():
-            raise ValueError("Не совпадает SHA-256 rclone.exe в архиве обновления.")
 
 
 def stage_update(update: UpdateInfo, *, opener=urlopen,

@@ -77,7 +77,8 @@ def enroll_profile(profile_id: str, owner_sid: str, *, drive: str) -> None:
     config = root / "rclone.conf"
     if config.is_symlink() or not config.is_file():
         raise FileNotFoundError("Защищённая конфигурация службы отсутствует.")
-    fingerprint = hashlib.sha256(config.read_bytes()).hexdigest()
+    # Text mode normalizes Windows CRLF to LF, matching config_text(profile).
+    fingerprint = hashlib.sha256(config.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
     payload = {"owner_sid": owner_sid, "fingerprint": fingerprint, "drive": drive}
     temp = root / "owner.json.tmp"
     target = root / "owner.json"

@@ -184,7 +184,11 @@ class MountTests(unittest.TestCase):
             rclone.write_bytes(b"rclone-placeholder")
             with mock.patch.object(mounts.sys, "frozen", True, create=True):
                 with mock.patch.object(mounts.sys, "executable", str(directory / "S3Drive.exe")):
-                    self.assertTrue(Path(mounts.find_rclone()).samefile(rclone))
+                    # This test checks portable discovery; integrity failures
+                    # have dedicated tests in test_rclone_integrity.py.
+                    with mock.patch("mounts.verify_bundled_rclone") as verify:
+                        self.assertTrue(Path(mounts.find_rclone()).samefile(rclone))
+                        verify.assert_called_once_with(rclone.resolve())
 
     @staticmethod
     def make_store(path, legacy_path=None):

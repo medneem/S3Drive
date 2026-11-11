@@ -278,10 +278,67 @@ def check_drive_free(drive: str) -> None:
 
 
 def _sc(*args: str) -> None:
-    proc = subprocess.run(["sc.exe", *args], capture_output=True, text=True, check=False)
-    if proc.returncode:
-        raise RuntimeError(f"Ошибка управления службой ({proc.returncode}): "
-                           + (proc.stderr.strip() or proc.stdout.strip()))
+    """Control SCM through documented Windows APIs, without a sc.exe child.
+
+    Keep the existing administrator boundary: installation and deletion
+    require UAC, and stop still requires the successful VFS-idle check.
+    """
+    if len(args) < 2 or args[0] not in {"create", "config", "start", "stop", "delete"}:
+        raise ValueError("Недопустимая операция управления службой.")
+
+    operation, name, *options = args
+    if not name.startswith(SERVICE_PREFIX):
+        raise ValueError("Недопустимое имя службы S3Drive.")
+
+    if operation == "create":
+        if len(options) != 8 or options[0::2] != [
+            "binPath=", "start=", "obj=", "DisplayName="
+        ] or options[3] != "auto" or options[5] != "LocalSystem":
+            raise ValueError("Недопустимые параметры создания службы.")
+    elif operation == "config":
+        if len(options) != 4 or options[0::2] != ["binPath=", "start="] or options[3] != "auto":
+            raise ValueError("Недопустимые параметры изменения службы.")
+    elif options:
+        raise ValueError("Лишние параметры операции управления службой.")
+
+    import win32service
+
+    access = (win32service.SC_MANAGER_CREATE_SERVICE if operation == "create"
+              else win32service.SC_MANAGER_CONNECT)
+    scm = win32service.OpenSCManager(None, None, access)
+    try:
+        if operation == "create":
+            handle = win32service.CreateService(
+                scm, name, options[7], win32service.SERVICE_ALL_ACCESS,
+                win32service.SERVICE_WIN32_OWN_PROCESS,
+                win32service.SERVICE_AUTO_START,
+                win32service.SERVICE_ERROR_NORMAL, options[1],
+                None, 0, options[5], None,
+            )
+        else:
+            handle = win32service.OpenService(
+                scm, name, win32service.SERVICE_ALL_ACCESS
+            )
+        try:
+            if operation == "config":
+                win32service.ChangeServiceConfig(
+                    handle, win32service.SERVICE_NO_CHANGE,
+                    win32service.SERVICE_AUTO_START,
+                    win32service.SERVICE_NO_CHANGE, options[1],
+                    None, 0, None, None, None, None,
+                )
+            elif operation == "start":
+                win32service.StartService(handle, None)
+            elif operation == "stop":
+                win32service.ControlService(
+                    handle, win32service.SERVICE_CONTROL_STOP
+                )
+            elif operation == "delete":
+                win32service.DeleteService(handle)
+        finally:
+            win32service.CloseServiceHandle(handle)
+    finally:
+        win32service.CloseServiceHandle(scm)
 
 
 def _choose_rc_port() -> int:

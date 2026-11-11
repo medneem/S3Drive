@@ -399,6 +399,52 @@ def ensure_vfs_idle(control: dict) -> None:
         ) from exc
 
 
+def _can_fast_start(profile, source_rclone: Path) -> bool:
+    """Restart only when protected service files match the selected profile.
+
+    No ACL, registry, executable or credential rewrite is needed in that case.
+    """
+    try:
+        dest = service_dir(profile.id)
+        binary = service_rclone_path(profile.id)
+        config = dest / "rclone.conf"
+        label = dest / "explorer_label_backup.json"
+        control_file = dest / "control.json"
+        htpasswd = dest / "rc.htpasswd"
+        if not all(path.is_file() for path in
+                   (binary, config, label, control_file, htpasswd)):
+            return False
+        if config.read_text(encoding="utf-8") != config_text(profile):
+            return False
+        label_data = json.loads(label.read_text(encoding="utf-8"))
+        if label_data.get("drive") != profile.drive or label_data.get("set_to") != profile.name:
+            return False
+        expected = verify_bundled_rclone(source_rclone)
+        verify_rclone_hash(binary, expected)
+        control = json.loads(control_file.read_text(encoding="utf-8"))
+        if not isinstance(control.get("port"), int) or not isinstance(control.get("password"), str):
+            return False
+        command = service_command(
+            profile, binary, config, dest / "cache", dest / "rclone.log",
+            htpasswd, control["port"],
+        )
+        import win32service
+        scm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_CONNECT)
+        try:
+            service = win32service.OpenService(
+                scm, service_name(profile.id), win32service.SERVICE_QUERY_CONFIG,
+            )
+            try:
+                installed_command = win32service.QueryServiceConfig(service)[3]
+            finally:
+                win32service.CloseServiceHandle(service)
+        finally:
+            win32service.CloseServiceHandle(scm)
+        return installed_command == command
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return False
+
+
 def install_and_start(profile, source_rclone: Path) -> None:
     """Called from elevated helper, never from unelevated GUI."""
     validate_service_profile(profile)
@@ -406,6 +452,11 @@ def install_and_start(profile, source_rclone: Path) -> None:
     if installed == SERVICE_RUNNING:
         raise RuntimeError("Служба уже запущена. Для изменения настроек остановите её.")
     check_drive_free(profile.drive)
+    # An unchanged stopped service needs only SCM StartService. Rebuilding
+    # protected files and rewriting HKLM on every restart is unnecessary.
+    if installed == SERVICE_STOPPED and _can_fast_start(profile, source_rclone):
+        _sc("start", service_name(profile.id))
+        return
     # Refuse an altered dependency before writing protected service files.
     expected_sha256 = verify_bundled_rclone(source_rclone)
     root = Path(os.environ["PROGRAMDATA"]) / "S3Drive"

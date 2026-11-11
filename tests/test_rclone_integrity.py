@@ -16,13 +16,14 @@ class RcloneIntegrityTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.binary = self.root / "rclone.exe"
-        self.manifest = self.root / "rclone.sha256"
         self.data = b"official binary fixture"
         self.binary.write_bytes(self.data)
         self.digest = hashlib.sha256(self.data).hexdigest()
-        self.manifest.write_text(self.digest.upper() + "\n", encoding="ascii")
+        pin = patch("rclone_integrity.RCLONE_SHA256", self.digest)
+        pin.start()
+        self.addCleanup(pin.stop)
 
-    def test_verified_bundle_returns_expected_digest(self):
+    def test_verified_binary_returns_expected_digest(self):
         self.assertEqual(verify_bundled_rclone(self.binary), self.digest)
 
     def test_binary_replacement_is_rejected(self):
@@ -30,22 +31,18 @@ class RcloneIntegrityTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "SHA-256"):
             verify_bundled_rclone(self.binary)
 
-    def test_missing_manifest_is_rejected(self):
-        self.manifest.unlink()
-        with self.assertRaisesRegex(RuntimeError, "rclone.sha256"):
-            verify_bundled_rclone(self.binary)
-
     def test_missing_binary_is_rejected(self):
         self.binary.unlink()
         with self.assertRaisesRegex(RuntimeError, "rclone.exe"):
             verify_bundled_rclone(self.binary)
 
-    def test_invalid_manifest_is_rejected(self):
-        for content in ("", "0" * 63, self.digest + " more", "../anotherfile", "\ufeff" + self.digest):
-            with self.subTest(content=content):
-                self.manifest.write_text(content, encoding="utf-8")
-                with self.assertRaisesRegex(RuntimeError, "rclone.sha256"):
-                    verify_bundled_rclone(self.binary)
+    def test_sidecar_cannot_override_the_compiled_checksum(self):
+        (self.root / "rclone.sha256").write_text(
+            hashlib.sha256(b"malicious").hexdigest(), encoding="ascii"
+        )
+        self.binary.write_bytes(b"malicious")
+        with self.assertRaisesRegex(RuntimeError, "SHA-256"):
+            verify_bundled_rclone(self.binary)
 
     def test_staged_copy_can_be_verified_with_same_digest(self):
         staged = self.root / "service-rclone.exe.new"

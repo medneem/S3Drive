@@ -33,6 +33,7 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-build.txt
+            requirements-admin-build.txt
 
       - name: Validate manual release context
         if: github.event_name == 'workflow_dispatch'

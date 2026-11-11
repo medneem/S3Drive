@@ -31,6 +31,7 @@ class MutexTests(unittest.TestCase):
         kernel.CreateEventW.return_value = 456
         kernel.WaitForSingleObject.side_effect = [0x102, 0]
         with SingleInstance(kernel32=kernel, get_last_error=lambda: 0) as instance:
+            instance.enable_activation()
             self.assertFalse(instance.activation_requested())
             self.assertTrue(instance.activation_requested())
             kernel.CreateEventW.assert_called_once()

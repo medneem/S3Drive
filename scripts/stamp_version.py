@@ -45,7 +45,16 @@ def make_version(base_version: str, run_number: str, release_version: str = "") 
     return f"{base_version}-dev.{int(run_number)}"
 
 
-def windows_version_info(version: str) -> str:
+_DESCRIPTIONS = {
+    "S3Drive": "S3Drive - Windows S3 drive manager",
+    "S3DriveAdmin": "S3Drive - Windows service administration",
+    "S3DriveUpdater": "S3Drive - application updater",
+}
+
+
+def windows_version_info(version: str, *, executable: str = "S3Drive") -> str:
+    if executable not in _DESCRIPTIONS:
+        raise ValueError("Unknown S3Drive executable")
     numeric = _components(version)
     file_version = ".".join(str(part) for part in numeric)
     return f"""VSVersionInfo(
@@ -63,10 +72,10 @@ def windows_version_info(version: str) -> str:
     StringFileInfo([
       StringTable('040904B0', [
         StringStruct('CompanyName', 'medneem'),
-        StringStruct('FileDescription', 'S3Drive'),
+        StringStruct('FileDescription', '{_DESCRIPTIONS[executable]}'),
         StringStruct('FileVersion', '{file_version}'),
-        StringStruct('InternalName', 'S3Drive'),
-        StringStruct('OriginalFilename', 'S3Drive.exe'),
+        StringStruct('InternalName', '{executable}'),
+        StringStruct('OriginalFilename', '{executable}.exe'),
         StringStruct('ProductName', 'S3Drive'),
         StringStruct('ProductVersion', '{version}')
       ])
@@ -86,9 +95,15 @@ def stamp_version(
         f'APP_VERSION = "{version}"\n',
         encoding="utf-8",
     )
-    (project_root / "windows_version_info.txt").write_text(
-        windows_version_info(version), encoding="utf-8"
-    )
+    for executable, resource in (
+        ("S3Drive", "windows_version_info.txt"),
+        ("S3DriveAdmin", "windows_admin_version_info.txt"),
+        ("S3DriveUpdater", "windows_updater_version_info.txt"),
+    ):
+        (project_root / resource).write_text(
+            windows_version_info(version, executable=executable),
+            encoding="utf-8",
+        )
     return version
 
 

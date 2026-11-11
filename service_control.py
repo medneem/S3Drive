@@ -34,6 +34,10 @@ class ReconfigurationRequired(RuntimeError):
     """The installed service settings differ from the portable profile."""
 
 
+class EnrollmentRequired(PermissionError):
+    """The existing service needs one-time UAC authorization to use the broker."""
+
+
 def validate_owner_sid(value: str) -> str:
     if not isinstance(value, str) or len(value) > 180 or not _SID.fullmatch(value):
         raise ValueError("Некорректный SID владельца службы.")
@@ -92,7 +96,7 @@ def load_enrollment(profile_id: str) -> dict:
     service_name(profile_id)
     path = service_dir(profile_id) / "owner.json"
     if path.is_symlink() or not path.is_file():
-        raise PermissionError("Служба ещё не зарегистрирована для управления без UAC.")
+        raise EnrollmentRequired("Служба ещё не зарегистрирована для управления без UAC.")
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or set(value) != {"owner_sid", "fingerprint", "drive"}:
         raise PermissionError("Нарушен формат регистрации службы.")
@@ -240,6 +244,8 @@ def serve(stop_event) -> None:
             except Exception as exc:
                 if isinstance(exc, ReconfigurationRequired):
                     reply = {"ok": False, "code": "RECONFIGURE", "error": str(exc)}
+                elif isinstance(exc, EnrollmentRequired):
+                    reply = {"ok": False, "code": "ENROLL", "error": str(exc)}
                 elif isinstance(exc, (ValueError, PermissionError, RuntimeError,
                                       OSError, KeyError, TypeError)):
                     reply = {"ok": False, "code": "ERROR", "error": str(exc)[:500]}
@@ -294,6 +300,8 @@ def send_control(action: str, profile) -> None:
         return
     if answer.get("code") == "RECONFIGURE":
         raise ReconfigurationRequired(str(answer.get("error", "")))
+    if answer.get("code") == "ENROLL":
+        raise EnrollmentRequired(str(answer.get("error", "")))
     raise RuntimeError(str(answer.get("error", "Ошибка управления службой."))[:500])
 
 

@@ -41,8 +41,9 @@ are kept. Changed S3 settings, removing a service or clearing the
 protected VFS cache still require UAC. Do not stop rclone via Windows
 Services or sc.exe: those tools bypass S3Drive's upload checks.
 An app update does not automatically replace installed rclone.exe,
-config, or running controller. The portable folder contains
-S3DriveControl.exe; never remove it before initial registration.
+config, or running controller. S3DriveControl is embedded in
+S3DriveAdmin.exe and installed in protected ProgramData on first setup.
+This preserves the original 11-file ZIP layout for older updaters.
 Service-mounted drives may be accessible to other local Windows users.
 
 SECURITY AND CONFIGURATION

@@ -510,5 +510,8 @@ def remove_service(profile_id: str) -> None:
         raise RuntimeError("Сначала остановите службу и дождитесь отключения диска.")
     _sc("delete", service_name(profile_id))
     restore_explorer_label(profile_id)
+    # Owner registration is valid only while this SCM service exists.
+    # Preserve the VFS cache, connection credentials and diagnostic log.
+    (service_dir(profile_id) / "owner.json").unlink(missing_ok=True)
     # Keep the old VFS cache and log for recovery/debugging; credentials remain
     # protected under ProgramData and are not silently discarded.

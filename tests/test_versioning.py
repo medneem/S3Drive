@@ -79,7 +79,7 @@ class VersioningTests(unittest.TestCase):
                                   SimpleNamespace(containing_dir=directory),
                                   create=True):
                     self.assertEqual(profiles.config_path(),
-                                     Path(directory) / "config.json")
+                                     (Path(directory) / "config.json").resolve())
                     self.assertTrue(portable_config_probe(fake))
                 with patch.object(profiles, "__compiled__",
                                   SimpleNamespace(containing_dir="/other"),

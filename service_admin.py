@@ -38,7 +38,15 @@ def run_action(action: str, profile_id: str) -> None:
         raise ValueError("Недопустимое действие службы.")
 
 
+def portable_config_probe(executable: Path) -> bool:
+    """Validate onefile config resolution without reading any S3 credentials."""
+    return config_path().resolve() == (executable.resolve().parent / "config.json")
+
+
 def main() -> int:
+    # CI-only packaging probe: no UAC, no service changes or config reads.
+    if len(sys.argv) == 2 and sys.argv[1] == "--self-test":
+        return 0 if portable_config_probe(Path(sys.argv[0])) else 2
     try:
         if len(sys.argv) != 3:
             raise ValueError("Использование: S3DriveAdmin.exe install|stop|remove|clear-cache <profile-id>")

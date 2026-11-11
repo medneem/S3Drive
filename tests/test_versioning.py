@@ -58,10 +58,33 @@ class VersioningTests(unittest.TestCase):
     def test_ci_embeds_and_reports_all_three_exe_versions_and_hashes(self):
         workflow = (Path(__file__).resolve().parents[1] / ".github" /
                     "workflows" / "build-windows.yml").read_text("utf-8")
-        self.assertIn("--name S3DriveAdmin --version-file windows_admin_version_info.txt", workflow)
+        self.assertIn("python -m nuitka", workflow)
+        self.assertIn("--onefile", workflow)
+        self.assertIn("--output-filename=S3DriveAdmin.exe", workflow)
+        self.assertIn("S3DriveAdmin.exe --self-test", workflow)
+        self.assertNotIn("--name S3DriveAdmin --version-file", workflow)
         self.assertIn("--name S3DriveUpdater --version-file windows_updater_version_info.txt", workflow)
         self.assertIn("Get-FileHash", workflow)
         self.assertIn("GITHUB_STEP_SUMMARY", workflow)
+
+    def test_elevated_helper_compilation_does_not_require_python_on_target(self):
+        from service_admin import portable_config_probe
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        import profiles
+        with tempfile.TemporaryDirectory() as directory:
+            fake = Path(directory) / "S3DriveAdmin.exe"
+            with patch.object(profiles.sys, "frozen", False, create=True):
+                with patch.object(profiles, "__compiled__",
+                                  SimpleNamespace(containing_dir=directory),
+                                  create=True):
+                    self.assertEqual(profiles.config_path(),
+                                     (Path(directory) / "config.json").resolve())
+                    self.assertTrue(portable_config_probe(fake))
+                with patch.object(profiles, "__compiled__",
+                                  SimpleNamespace(containing_dir="/other"),
+                                  create=True):
+                    self.assertFalse(portable_config_probe(fake))
 
     def test_ci_builds_only_onefile_windows_archive(self):
         workflow = (Path(__file__).resolve().parents[1] / ".github" /

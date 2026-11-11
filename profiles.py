@@ -74,8 +74,15 @@ class Profile:
 
 def config_path() -> Path:
     """Portable config beside S3Drive.exe; project folder in development."""
-    root = (Path(sys.executable).resolve().parent if getattr(sys, "frozen", False)
-            else Path(__file__).resolve().parent)
+    if getattr(sys, "frozen", False):
+        # PyInstaller onefile GUI and updater.
+        root = Path(sys.executable).resolve().parent
+    elif "__compiled__" in globals():
+        # Nuitka onefile helper: __file__ points to the unpacked payload.
+        # containing_dir is the actual S3DriveAdmin.exe installation folder.
+        root = Path(__compiled__.containing_dir).resolve()
+    else:
+        root = Path(__file__).resolve().parent
     return root / "config.json"
 
 

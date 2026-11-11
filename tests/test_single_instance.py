@@ -25,6 +25,39 @@ class MutexTests(unittest.TestCase):
             self.assertFalse(instance.acquired)
         kernel.CloseHandle.assert_called_once_with(456)
 
+    def test_first_instance_listens_for_activation_requests(self):
+        kernel = Mock()
+        kernel.CreateMutexW.return_value = 123
+        kernel.CreateEventW.return_value = 456
+        kernel.WaitForSingleObject.side_effect = [0x102, 0]
+        with SingleInstance(kernel32=kernel, get_last_error=lambda: 0) as instance:
+            instance.enable_activation()
+            self.assertFalse(instance.activation_requested())
+            self.assertTrue(instance.activation_requested())
+            kernel.CreateEventW.assert_called_once()
+        kernel.CloseHandle.assert_any_call(456)
+        kernel.CloseHandle.assert_any_call(123)
+
+    def test_duplicate_notifies_existing_window_without_taking_mutex(self):
+        kernel = Mock()
+        kernel.CreateMutexW.return_value = 123
+        kernel.OpenEventW.return_value = 789
+        with SingleInstance(kernel32=kernel, get_last_error=lambda: 183) as instance:
+            self.assertFalse(instance.acquired)
+            self.assertTrue(instance.request_activation())
+        kernel.SetEvent.assert_called_once_with(789)
+        kernel.CloseHandle.assert_any_call(789)
+        kernel.CloseHandle.assert_any_call(123)
+
+    def test_duplicate_still_rejected_if_activation_event_missing(self):
+        kernel = Mock()
+        kernel.CreateMutexW.return_value = 123
+        kernel.OpenEventW.return_value = 0
+        with SingleInstance(kernel32=kernel, get_last_error=lambda: 183) as instance:
+            self.assertFalse(instance.acquired)
+            self.assertFalse(instance.request_activation())
+        kernel.SetEvent.assert_not_called()
+
     def test_api_error_prevents_launch(self):
         kernel = Mock()
         kernel.CreateMutexW.return_value = 0
@@ -58,6 +91,25 @@ class MutexTests(unittest.TestCase):
             self.assertTrue(first.acquired)
             self.assertEqual(child(), "0")
         self.assertEqual(child(), "1")
+
+
+    @unittest.skipUnless(os.name == "nt", "Windows named event integration")
+    def test_second_real_process_signals_first_gui_for_activation(self):
+        code = (
+            "from single_instance import SingleInstance\n"
+            "with SingleInstance() as instance:\n"
+            "    print(int(instance.acquired), int(instance.request_activation()))\n"
+        )
+        with SingleInstance() as first:
+            self.assertTrue(first.acquired)
+            first.enable_activation()
+            output = subprocess.run(
+                [sys.executable, "-c", code], text=True, capture_output=True,
+                timeout=15, check=True,
+            )
+            self.assertEqual(output.stdout.strip(), "0 1")
+            self.assertTrue(first.activation_requested())
+            self.assertFalse(first.activation_requested())
 
 
 class GUIStartupTests(unittest.TestCase):

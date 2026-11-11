@@ -17,6 +17,7 @@ import tempfile
 from urllib.request import Request, urlopen
 import json
 import zipfile
+from typing import Callable
 
 RELEASE_API = "https://api.github.com/repos/medneem/S3Drive/releases/latest"
 RELEASE_LATEST_PAGE = "https://github.com/medneem/S3Drive/releases/latest"
@@ -184,7 +185,9 @@ def verify_archive(path: Path, digest: str, version: str) -> None:
 
 
 def stage_update(update: UpdateInfo, *, opener=urlopen,
-                 parent: Path | None = None) -> StagedUpdate:
+                 parent: Path | None = None,
+                 on_progress: Callable[[int, int], None] | None = None,
+                 on_verifying: Callable[[], None] | None = None) -> StagedUpdate:
     """Download only on user request, verify before any local program changes."""
     staging = Path(tempfile.mkdtemp(prefix="S3Drive-update-", dir=parent))
     archive = staging / "update.zip"
@@ -197,8 +200,12 @@ def stage_update(update: UpdateInfo, *, opener=urlopen,
                 if written > MAX_ARCHIVE_BYTES or written > update.size:
                     raise ValueError("Размер загрузки превысил размер релиза.")
                 target.write(data)
+                if on_progress is not None:
+                    on_progress(written, update.size)
         if written != update.size:
             raise ValueError("Загружен неполный архив.")
+        if on_verifying is not None:
+            on_verifying()
         verify_archive(archive, update.digest, update.version)
         return StagedUpdate(archive, update.digest, update.version, staging)
     except Exception:

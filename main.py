@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QObject, QRunnable, QThreadPool, Signal
-from PySide6.QtGui import QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout,
@@ -98,6 +98,8 @@ class _MonitorTask(QRunnable):
 class _UpdateSignals(QObject):
     checked = Signal(object, str)
     downloaded = Signal(object, str)
+    progress = Signal(int, int)
+    verifying = Signal()
 
 
 class _ReleaseCheckTask(QRunnable):
@@ -124,7 +126,11 @@ class _ReleaseDownloadTask(QRunnable):
 
     def run(self):
         try:
-            self.signals.downloaded.emit(stage_update(self.release), "")
+            self.signals.downloaded.emit(stage_update(
+                self.release,
+                on_progress=self.signals.progress.emit,
+                on_verifying=self.signals.verifying.emit,
+            ), "")
         except Exception as exc:
             self.signals.downloaded.emit(None, str(exc))
 
@@ -225,6 +231,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"S3Drive v{APP_VERSION}")
+        self._closing_for_update = False
         self.setMinimumSize(820, 490)
         self.resize(940, 560)
         self.store = ProfileStore()
@@ -261,6 +268,10 @@ class MainWindow(QMainWindow):
         self.update_button.setVisible(False)
         self.update_button.setEnabled(False)
         self.update_button.clicked.connect(self.start_release_update)
+        self._downloading_update = False
+        self._update_spinner_angle = 0
+        self.update_spinner = QTimer(self)
+        self.update_spinner.timeout.connect(self._animate_update_spinner)
         header.addWidget(self.update_button)
         self.settings_button = QPushButton(tr("Настройки"))
         self.settings_button.clicked.connect(self.open_settings)
@@ -414,7 +425,8 @@ class MainWindow(QMainWindow):
         """Update static widgets in-place; never interrupt a mounted drive."""
         self.header_title.setText(tr("S3Drive — подключение S3 как диска Windows"))
         self.settings_button.setText(tr("Настройки"))
-        self.update_button.setText(tr("Обновить"))
+        if not self._downloading_update:
+            self.update_button.setText(tr("Обновить"))
         self.s3_group.setTitle(tr("Параметры S3"))
         for label, widget in self.field_labels:
             field_label = self.fields.labelForField(widget)
@@ -576,21 +588,63 @@ class MainWindow(QMainWindow):
                 parent, "S3Drive", tr("Доступна S3Drive v{version}", version=release.version)
             )
 
+    def _animate_update_spinner(self) -> None:
+        """Draw a lightweight native-size animated arc inside the Update button."""
+        self._update_spinner_angle = (self._update_spinner_angle - 28) % 360
+        pixmap = QPixmap(18, 18)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor("#1685cf"), 2))
+        painter.drawArc(3, 3, 12, 12, self._update_spinner_angle * 16, 260 * 16)
+        painter.end()
+        self.update_button.setIcon(QIcon(pixmap))
+
+    def on_release_progress(self, written: int, expected: int) -> None:
+        """Show actual bytes received, not a fake timer-based percentage."""
+        if not self._downloading_update or not self.available_release or expected <= 0:
+            return
+        percent = min(100, max(0, written * 100 // expected))
+        self.update_button.setText(tr("Загрузка… {percent}%", percent=percent))
+        self.statusBar().showMessage(tr(
+            "Скачивание S3Drive v{version}… {percent}%",
+            version=self.available_release.version, percent=percent
+        ))
+
+    def on_release_verifying(self) -> None:
+        """Do not describe SHA-256 verification as downloading at 100%."""
+        if not self._downloading_update or not self.available_release:
+            return
+        self.update_button.setText(tr("Проверка SHA-256…"))
+        self.statusBar().showMessage(tr(
+            "Проверка SHA-256 S3Drive v{version}…",
+            version=self.available_release.version
+        ))
+
     def start_release_update(self) -> None:
         """User-requested download, never triggered automatically."""
         if self.available_release is None or not self.update_button.isEnabled():
             return
         self.update_button.setEnabled(False)
-        self.update_button.setText(tr("Загрузка…"))
-        self.statusBar().showMessage(
-            tr("Скачивание и проверка S3Drive v{version}…", version=self.available_release.version)
-        )
+        self._downloading_update = True
+        self.update_button.setText(tr("Загрузка… {percent}%", percent=0))
+        self.update_spinner.start(90)
+        self._animate_update_spinner()
+        self.statusBar().showMessage(tr(
+            "Скачивание S3Drive v{version}… {percent}%",
+            version=self.available_release.version, percent=0
+        ))
         task = _ReleaseDownloadTask(self.available_release)
+        task.signals.progress.connect(self.on_release_progress)
+        task.signals.verifying.connect(self.on_release_verifying)
         task.signals.downloaded.connect(self.on_release_downloaded)
         self.update_pool.start(task)
 
     def on_release_downloaded(self, staged: StagedUpdate | None, error: str) -> None:
         """Close normally, then let a separate updater replace the executable."""
+        self._downloading_update = False
+        self.update_spinner.stop()
+        self.update_button.setIcon(QIcon())
         self.update_button.setText(tr("Обновить"))
         if error or staged is None:
             self.update_button.setEnabled(True)
@@ -632,13 +686,45 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             discard_update(staged)
             self.show()
+            self.monitor_timer.start(1500)
             if application is not None:
                 application.setQuitOnLastWindowClosed(True)
             self.update_button.setEnabled(True)
             QMessageBox.warning(self, "Не удалось запустить обновление", str(exc))
             return
+        self._closing_for_update = True
+        # Stop GUI-only timers before the event loop exits. None of these
+        # timers controls the independently running rclone Windows service.
+        for timer in (self.mount_timer, self.label_timer, self.timer,
+                      self.monitor_timer, self.release_check_timer):
+            timer.stop()
+        if hasattr(self, "activation_timer"):
+            self.activation_timer.stop()
         if application is not None:
-            application.quit()
+            # Restore the Qt default; otherwise a hidden window can leave
+            # the GUI process holding its single-instance mutex.
+            application.setQuitOnLastWindowClosed(True)
+            QTimer.singleShot(0, application.quit)
+
+    def bind_single_instance(self, instance: SingleInstance) -> None:
+        """Listen only while the existing GUI is alive; never create another."""
+        self.activation_timer = QTimer(self)
+        self.activation_timer.timeout.connect(
+            lambda: self.activate_existing_window()
+            if instance.activation_requested() else None
+        )
+        self.activation_timer.start(250)
+
+    def activate_existing_window(self) -> None:
+        """A duplicate launch restores the one permitted GUI window."""
+        if self._closing_for_update:
+            return
+        if self.isMinimized():
+            self.showNormal()
+        else:
+            self.show()
+        self.raise_()
+        self.activateWindow()
 
     def selected_id(self) -> str | None:
         item = self.items.currentItem()
@@ -1195,6 +1281,7 @@ def main() -> int:
         app = QApplication(sys.argv)
         set_language(read_language(config_path()))
         if not instance.acquired:
+            instance.request_activation()
             QMessageBox.information(
                 None, "S3Drive уже запущен",
                 "S3Drive уже запущен. Закройте существующее окно программы, "
@@ -1217,6 +1304,12 @@ def main() -> int:
         app.setWindowIcon(app_icon())
         window = MainWindow()
         window.show()
+        try:
+            instance.enable_activation()
+            window.bind_single_instance(instance)
+        except OSError:
+            # The mutex still prevents a second GUI if focus signalling fails.
+            pass
         return app.exec()
 
 

@@ -303,6 +303,16 @@ class ServiceTests(unittest.TestCase):
         protect.assert_not_called()
         label.assert_not_called()
 
+    def test_changed_service_configuration_keeps_full_reinstall_path(self):
+        from windows_service import install_and_start
+        profile = sample()
+        with patch("windows_service.service_status", return_value=SERVICE_STOPPED), \
+             patch("windows_service._can_fast_start", return_value=False), \
+             patch("windows_service.check_drive_free"), \
+             patch("windows_service.verify_bundled_rclone", side_effect=RuntimeError("reinstall")):
+            with self.assertRaisesRegex(RuntimeError, "reinstall"):
+                install_and_start(profile, Path("C:/S3Drive/rclone.exe"))
+
     def test_service_stop_allowed_with_vfs_baseline_in_use_one(self):
         from windows_service import stop_service
         profile_id = sample().id

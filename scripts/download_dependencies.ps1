@@ -5,6 +5,7 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $rcloneVersion = "1.76.0"
+$rcloneExpectedExeSha256 = "ACD80683E23151E93BBE0D6FFA74D26E542EC510332F630BEECB9944F8D1A623"
 $rcloneZipName = "rclone-v$rcloneVersion-windows-amd64.zip"
 $rcloneExpectedSha256 = "8B4FD2737ADE4E70C057EF4A49DEB7CFFE94B0FB9D7587C189D149823F21A1DC"
 $winfspTag = "v2.2B4"
@@ -65,7 +66,9 @@ if ($rcloneReportedVersion[0] -notmatch [regex]::Escape($rcloneVersion)) {
 }
 # Hash the extracted EXE only after the official upstream ZIP is SHA-256 verified.
 $rcloneExeSha256 = (Get-FileHash -LiteralPath (Join-Path $tools "rclone.exe") -Algorithm SHA256).Hash
-Set-Content -LiteralPath (Join-Path $tools "rclone.sha256") -Value $rcloneExeSha256 -Encoding ascii
+if ($rcloneExeSha256 -ne $rcloneExpectedExeSha256) {
+    throw "SHA256 verification failed for extracted official rclone.exe"
+}
 Remove-Item $archive -Force
 Remove-Item $extract -Recurse -Force
 Write-Host "Bundled dependencies: rclone $rcloneVersion and WinFsp $winfspTag"

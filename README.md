@@ -65,7 +65,7 @@ For step-by-step help see [README_SETUP.txt](README_SETUP.txt) (English) and [RE
 
 ## Configuration and language
 
-A portable config.json lives beside S3Drive.exe. It stores both profiles and the UI language. The top-level language setting is "en" by default or "ru" for Russian. Older config.json files without this property automatically use English; existing profiles remain unchanged.
+A portable config.json lives beside S3Drive.exe and is the **only source of connection profiles**. It stores profiles and UI language. If it is absent, an empty config is created; no profiles are imported from the obsolete `%LOCALAPPDATA%\\S3Drive\\profiles.json`, which is removed at startup. Profiles previously copied into config.json remain unchanged. The top-level language setting is "en" by default or "ru" for Russian. Older config.json files without this property automatically use English.
 
 Connection keys are stored encrypted using Windows DPAPI. Do not publish your config.json. DPAPI encryption is tied to Windows protection and cannot simply be decrypted on another machine/account. Changing the UI language does not touch the mounted drive or service state.
 

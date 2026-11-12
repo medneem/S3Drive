@@ -54,6 +54,12 @@ def run_action(action: str, profile_id: str, owner_sid: str | None = None) -> No
                 raise RuntimeError("Не удалось определить букву старой службы.")
             drive = json.loads(path.read_text(encoding="utf-8"))["drive"]
             enroll_profile(profile_id, owner_sid, drive=drive)
+    elif action == "repair-control":
+        # Repair only the protected broker binary; never modify rclone mounts,
+        # RC credentials, or the enrolled owner SID.
+        if service_status(profile_id) is None:
+            raise RuntimeError("Служба диска не установлена.")
+        install_control_service(bundled_broker_archive())
     elif action == "stop":
         stop_service(profile_id)
     elif action == "remove":
@@ -81,7 +87,7 @@ def main() -> int:
     try:
         if len(sys.argv) not in (3, 4):
             raise ValueError(
-                "Использование: S3DriveAdmin.exe install|setup-control|stop|remove|clear-cache <profile-id> [owner-SID]"
+                "Использование: S3DriveAdmin.exe install|setup-control|repair-control|stop|remove|clear-cache <profile-id> [owner-SID]"
             )
         action = sys.argv[1]
         if (action in ("install", "setup-control")) != (len(sys.argv) == 4):

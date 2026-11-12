@@ -127,11 +127,13 @@ def install_control_service(source_archive: Path) -> None:
                 _wait_service_state(win32serviceutil, win32service, win32service.SERVICE_STOPPED)
 
             # Backup is private and protected; no service disk/cache is touched.
-            if status is not None:
-                shutil.copy2(target, backup)
-                protect_file(backup)
+            # Keep the backup inside the rollback block: if copying it fails,
+            # the previously running controller must be started again.
             replaced = False
             try:
+                if status is not None:
+                    shutil.copy2(target, backup)
+                    protect_file(backup)
                 os.replace(temporary, target)
                 replaced = True
                 protect_file(target)
@@ -160,6 +162,9 @@ def install_control_service(source_archive: Path) -> None:
                         if status == win32service.SERVICE_RUNNING:
                             win32service.StartService(handle, None)
                             _wait_service_state(win32serviceutil, win32service, win32service.SERVICE_RUNNING)
+                        # Discard a backup only after the previous broker is
+                        # safely restored and its original state recovered.
+                        backup.unlink(missing_ok=True)
                     except Exception as rollback_error:
                         raise RuntimeError(
                             "Не удалось восстановить прежнюю службу управления S3Drive."

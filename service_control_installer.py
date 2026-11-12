@@ -80,7 +80,7 @@ def install_control_service(source_archive: Path) -> None:
                 win32service.SERVICE_AUTO_START,
                 win32service.SERVICE_ERROR_NORMAL,
                 '"' + str(target) + '"',
-                None, 0, "LocalSystem", None,
+                None, 0, None, "LocalSystem", None,
             )
         else:
             handle = win32service.OpenService(

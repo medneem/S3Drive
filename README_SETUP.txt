@@ -15,6 +15,9 @@ English guide. Russian guide: README_SETUP_RU.txt
    provided the credentials have ListBuckets permissions.
 5. Optionally enable Create desktop shortcut and Open drive after connecting.
 6. Click Save to create config.json beside S3Drive.exe.
+   Only this file is used for profiles. If missing, a new empty config is
+   created; obsolete %LOCALAPPDATA%\\S3Drive\\profiles.json is deleted,
+   not imported. Existing profiles already in config.json are preserved.
 7. Optionally enable background mode or Run as Windows service.
 8. Click Connect; wait until the drive appears in Windows Explorer.
 9. To choose Russian: Settings -> Interface language -> Русский -> Save.

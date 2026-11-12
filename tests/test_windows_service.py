@@ -248,7 +248,12 @@ class ServiceTests(unittest.TestCase):
                 native.CreateService.assert_called_once()
                 self.assertEqual(native.CreateService.call_args.args[2], "S3Drive S:")
                 self.assertEqual(native.CreateService.call_args.args[7], "C:\\rclone.exe mount")
-                self.assertEqual(native.CreateService.call_args.args[10], "LocalSystem")
+                # pywin32 CreateService requires 13 positional arguments:
+                # dependencies occupies index 10, account index 11.
+                self.assertEqual(len(native.CreateService.call_args.args), 13)
+                self.assertIsNone(native.CreateService.call_args.args[10])
+                self.assertEqual(native.CreateService.call_args.args[11], "LocalSystem")
+                self.assertIsNone(native.CreateService.call_args.args[12])
                 _sc("start", name)
                 native.StartService.assert_called_once_with("service", None)
                 _sc("stop", name)

@@ -139,6 +139,12 @@ class ProfileStore:
         return profiles
 
     def load(self) -> list[Profile]:
+        # Portable config.json is the ONLY source of profiles. Discard the
+        # obsolete local-app-data profile store without reading/decrypting it.
+        # Never delete config.json itself if both paths refer to the same file.
+        if (self.legacy_path is not None
+                and self.legacy_path.resolve() != self.path.resolve()):
+            self.legacy_path.unlink(missing_ok=True)
         if self.path.exists():
             data = json.loads(self.path.read_text(encoding="utf-8-sig"))
             if not isinstance(data, dict) or not isinstance(data.get("profiles"), list):
@@ -154,13 +160,7 @@ class ProfileStore:
             self.check_updates_on_startup = check_updates
             return profiles
 
-        # Upgrade from earlier releases; never delete the old file.
-        if self.legacy_path is not None and self.legacy_path.is_file():
-            data = json.loads(self.legacy_path.read_text(encoding="utf-8-sig"))
-            profiles = self._deserialize(data)
-            self.save(profiles)
-            return profiles
-
+        # No automatic migration: a new portable folder starts empty.
         self.save([])
         return []
 

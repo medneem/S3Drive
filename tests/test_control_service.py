@@ -125,9 +125,12 @@ class ControlProtocolTests(unittest.TestCase):
         # Synchronous CreateFile requests SYNCHRONIZE in addition to data R/W.
         # Admin-only CI sessions can mask a missing SYNCHRONIZE ACE.
         import win32security
-        from service_control import _pipe_security_attributes, PIPE_CLIENT_ACCESS
+        from service_control import (
+            _pipe_security_attributes, PIPE_CLIENT_ACCESS, PIPE_CLIENT_ALLOWED
+        )
 
         self.assertEqual(PIPE_CLIENT_ACCESS, 0x00100003)
+        self.assertEqual(PIPE_CLIENT_ALLOWED, 0x0012019B)
         attrs = _pipe_security_attributes()
         acl = attrs.SECURITY_DESCRIPTOR.GetSecurityDescriptorDacl()
         masks = [
@@ -135,7 +138,7 @@ class ControlProtocolTests(unittest.TestCase):
             for i in range(acl.GetAceCount())
             if win32security.ConvertSidToStringSid(acl.GetAce(i)[2]) == "S-1-5-11"
         ]
-        self.assertEqual(masks, [PIPE_CLIENT_ACCESS])
+        self.assertEqual(masks, [PIPE_CLIENT_ALLOWED])
         # FILE_CREATE_PIPE_INSTANCE and FILE_APPEND_DATA overlap at bit 0x4.
         self.assertEqual(masks[0] & 0x0004, 0)
 

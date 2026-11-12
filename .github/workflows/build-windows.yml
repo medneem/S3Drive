@@ -123,24 +123,22 @@ jobs:
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "$name SHA256: $sha256"
           }
 
-      - name: Smoke test protected control service under Windows SCM
+      - name: Smoke test real broker installation and Windows SCM
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $name = "S3DriveControl"
-          $bin = (Resolve-Path "dist/S3DriveControl.exe").Path
-          $created = $false
+          if (Get-Service -Name $name -ErrorAction SilentlyContinue) {
+            throw "Unexpected S3DriveControl service already installed on runner"
+          }
           try {
-            if (Get-Service -Name $name -ErrorAction SilentlyContinue) {
-              throw "Unexpected S3DriveControl service already installed on runner"
-            }
-            New-Service -Name $name -BinaryPathName ('"' + $bin + '"') -DisplayName "S3Drive CI control broker" -StartupType Manual | Out-Null
-            $created = $true
-            Start-Service -Name $name -ErrorAction Stop
-            $service = Get-Service -Name $name
+            # Exercise the actual elevated Python installer, not New-Service:
+            # its win32service.CreateService argument list must be correct.
+            python -c "from pathlib import Path; from service_control_installer import install_control_service; install_control_service(Path('dist/S3DriveControl-bundled.zip'))"
+            if ($LASTEXITCODE -ne 0) { throw "S3DriveControl installer failed" }
+            $service = Get-Service -Name $name -ErrorAction Stop
             if ($service.Status -ne "Running") { throw "S3DriveControl failed to run as Windows service" }
-            # Deliberately unknown profile: broker MUST reject it, but the
-            # client must receive a real response from the pipe over Windows IPC.
+            # Unknown profile must be denied through the real named pipe.
             @'
           from types import SimpleNamespace
           from service_control import send_control, EnrollmentRequired
@@ -153,7 +151,7 @@ jobs:
           '@ | python -
             if ($LASTEXITCODE -ne 0) { throw "Broker named-pipe handshake failed" }
           } finally {
-            if ($created) {
+            if (Get-Service -Name $name -ErrorAction SilentlyContinue) {
               Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
               & sc.exe delete $name | Out-Host
               if ($LASTEXITCODE -ne 0) { throw "Unable to remove CI test service" }

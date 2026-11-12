@@ -21,6 +21,9 @@ from windows_service import (
 CONTROL_SERVICE = "S3DriveControl"
 PIPE_NAME = r"\\.\pipe\S3DriveControl-v1"
 MAX_MESSAGE = 4096
+# Synchronous named-pipe I/O requires SYNCHRONIZE as well as read/write data.
+# Exclude FILE_CREATE_PIPE_INSTANCE (bit 0x4) to prevent client servers.
+PIPE_CLIENT_ACCESS = 0x00100003
 _SID = re.compile(r"S-1-(?:[0-9]+-){1,15}[0-9]+\Z")
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _DRIVE = re.compile(r"[A-Z]:\Z")
@@ -28,6 +31,10 @@ _DRIVE = re.compile(r"[A-Z]:\Z")
 
 class ControlUnavailable(ConnectionError):
     """The protected control service is absent or not accepting connections."""
+
+
+class ControlAccessDenied(PermissionError):
+    """An installed old broker has a pipe DACL denying standard users."""
 
 
 class ReconfigurationRequired(RuntimeError):
@@ -203,8 +210,11 @@ def _pipe_security_attributes():
     acl = win32security.ACL()
     for sid in (system, admins):
         acl.AddAccessAllowedAce(win32security.ACL_REVISION, 0x001F01FF, sid)
-    # FILE_READ_DATA | FILE_WRITE_DATA, but NOT FILE_CREATE_PIPE_INSTANCE.
-    acl.AddAccessAllowedAce(win32security.ACL_REVISION, 0x00000003, authenticated)
+    # Synchronous read/write also needs SYNCHRONIZE; never grant
+    # FILE_CREATE_PIPE_INSTANCE (same bit as FILE_APPEND_DATA: 0x0004).
+    acl.AddAccessAllowedAce(
+        win32security.ACL_REVISION, PIPE_CLIENT_ACCESS, authenticated
+    )
     descriptor = win32security.SECURITY_DESCRIPTOR()
     descriptor.SetSecurityDescriptorDacl(True, acl, False)
     attrs = win32security.SECURITY_ATTRIBUTES()
@@ -286,12 +296,16 @@ def send_control(action: str, profile) -> None:
         win32pipe.WaitNamedPipe(PIPE_NAME, 3000)
         # Minimal read/write access; do not request FILE_CREATE_PIPE_INSTANCE.
         handle = win32file.CreateFile(
-            PIPE_NAME, 0x00000003, 0, None, win32con.OPEN_EXISTING,
+            PIPE_NAME, PIPE_CLIENT_ACCESS, 0, None, win32con.OPEN_EXISTING,
             0x00120000, None,  # SECURITY_SQOS_PRESENT | SECURITY_IMPERSONATION
         )
     except pywintypes.error as exc:
         if exc.winerror in (2, 53, 121, 231, 233):
             raise ControlUnavailable("Не запущена служба управления S3Drive.") from exc
+        if exc.winerror == 5:
+            raise ControlAccessDenied(
+                "Старая служба S3DriveControl запрещает доступ обычному пользователю."
+            ) from exc
         raise
     try:
         win32file.WriteFile(handle, data)
@@ -320,7 +334,7 @@ def wake_server() -> None:
         import win32pipe
         win32pipe.WaitNamedPipe(PIPE_NAME, 1000)
         handle = win32file.CreateFile(
-            PIPE_NAME, 0x00000003, 0, None, win32con.OPEN_EXISTING,
+            PIPE_NAME, PIPE_CLIENT_ACCESS, 0, None, win32con.OPEN_EXISTING,
             0x00120000, None,
         )
         win32file.CloseHandle(handle)

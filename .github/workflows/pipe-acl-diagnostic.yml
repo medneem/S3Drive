@@ -115,6 +115,21 @@ jobs:
                           print("NONADMIN CREATEFILE DENIED", hex(mask),
                                 str(exc), flush=True)
                       time.sleep(0.08)
+                  for flags in (0, 0x00100000, 0x00120000):
+                      for mask in (1, 3, 0x00100003):
+                          try:
+                              win32pipe.WaitNamedPipe(PIPE_NAME, 1500)
+                              h = win32file.CreateFile(
+                                  PIPE_NAME, mask, 0, None,
+                                  win32con.OPEN_EXISTING, flags, None,
+                              )
+                              print("NONADMIN FLAGS OPEN", hex(flags), hex(mask),
+                                    flush=True)
+                              win32file.CloseHandle(h)
+                          except Exception as exc:
+                              print("NONADMIN FLAGS DENIED", hex(flags), hex(mask),
+                                    str(exc), flush=True)
+                          time.sleep(0.08)
                   try:
                       send_control("stop", SimpleNamespace(id="12345678-1234-1234-1234-123456789abc"))
                   except EnrollmentRequired:

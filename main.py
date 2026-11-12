@@ -23,8 +23,8 @@ from drive_actions import (MountState, create_desktop_shortcut, disk_root,
                            mount_state, open_mounted_disk)
 from service_ui import run_admin
 from service_control import (
-    ControlUnavailable, EnrollmentRequired, ReconfigurationRequired,
-    send_control,
+    ControlAccessDenied, ControlUnavailable, EnrollmentRequired,
+    ReconfigurationRequired, send_control,
 )
 from drive_labels import notify_explorer, read_native_volume_label, install_explorer_network_label
 from windows_service import service_status, SERVICE_RUNNING, SERVICE_STOPPED
@@ -927,6 +927,11 @@ class MainWindow(QMainWindow):
                 elif state == SERVICE_STOPPED:
                     try:
                         send_control("start", profile)
+                    except ControlAccessDenied:
+                        # Old broker lacks SYNCHRONIZE in the user pipe ACL.
+                        # One-time UAC replaces only S3DriveControl, not rclone.
+                        run_admin("repair-control", profile.id)
+                        send_control("start", profile)
                     except (ControlUnavailable, EnrollmentRequired):
                         # One-time migration of services installed before v1.5.5.
                         run_admin("setup-control", profile.id)
@@ -964,6 +969,9 @@ class MainWindow(QMainWindow):
                     QMessageBox.information(self, "S3Drive", "Служба уже остановлена.")
                 else:
                     try:
+                        send_control("stop", profile)
+                    except ControlAccessDenied:
+                        run_admin("repair-control", profile.id)
                         send_control("stop", profile)
                     except (ControlUnavailable, EnrollmentRequired):
                         # Existing installation needs a one-time UAC migration.

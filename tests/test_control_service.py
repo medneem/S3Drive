@@ -209,6 +209,30 @@ class ControlProtocolTests(unittest.TestCase):
             native.StartService.assert_called_once_with("broker", None)
             self.assertEqual(state[0], native.SERVICE_RUNNING)
 
+    def test_access_denied_repair_action_is_privileged_but_does_not_edit_mount(self):
+        from service_admin import run_action
+        p = profile()
+        with patch("service_admin.ctypes.windll.shell32.IsUserAnAdmin", return_value=True), \
+             patch("service_admin.service_status", return_value=4), \
+             patch("service_admin.install_control_service") as install, \
+             patch("service_admin.stop_service") as stop, \
+             patch("service_admin.remove_service") as remove:
+            run_action("repair-control", p.id)
+            install.assert_called_once()
+            stop.assert_not_called()
+            remove.assert_not_called()
+
+    def test_gui_uses_repair_path_for_nonadmin_pipe_denial(self):
+        from service_ui import run_admin
+        root = Path(__file__).resolve().parents[1]
+        gui = (root / "main.py").read_text("utf-8")
+        self.assertIn("ControlAccessDenied", gui)
+        self.assertGreaterEqual(gui.count('run_admin("repair-control", profile.id)'), 2)
+        # Clients cannot send the repair command over the unprivileged pipe.
+        from service_control import parse_request
+        with self.assertRaises(ValueError):
+            parse_request({"action": "repair-control", "profile_id": profile().id})
+
     def test_broker_does_not_expose_admin_only_actions(self):
         from service_control import parse_request
         p = profile()

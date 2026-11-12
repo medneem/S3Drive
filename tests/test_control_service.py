@@ -121,6 +121,94 @@ class ControlProtocolTests(unittest.TestCase):
                 handle_request({"action": "stop", "profile_id": p.id}, owner)
             stop.assert_called_once_with(p.id)
 
+    def test_named_pipe_nonadmin_acl_allows_sync_without_instance_creation(self):
+        # Synchronous CreateFile requests SYNCHRONIZE in addition to data R/W.
+        # Admin-only CI sessions can mask a missing SYNCHRONIZE ACE.
+        import win32security
+        from service_control import _pipe_security_attributes, PIPE_CLIENT_ACCESS
+
+        self.assertEqual(PIPE_CLIENT_ACCESS, 0x00100003)
+        attrs = _pipe_security_attributes()
+        acl = attrs.SECURITY_DESCRIPTOR.GetSecurityDescriptorDacl()
+        masks = [
+            acl.GetAce(i)[1]
+            for i in range(acl.GetAceCount())
+            if win32security.ConvertSidToStringSid(acl.GetAce(i)[2]) == "S-1-5-11"
+        ]
+        self.assertEqual(masks, [PIPE_CLIENT_ACCESS])
+        # FILE_CREATE_PIPE_INSTANCE and FILE_APPEND_DATA overlap at bit 0x4.
+        self.assertEqual(masks[0] & 0x0004, 0)
+
+    def test_access_denied_at_client_pipe_open_requires_broker_repair(self):
+        import pywintypes
+        from unittest.mock import Mock
+        import sys
+        from service_control import send_control, ControlAccessDenied
+
+        p = profile()
+        fake_pipe = Mock()
+        fake_file = Mock()
+        fake_con = Mock()
+        fake_con.OPEN_EXISTING = 3
+        fake_file.CreateFile.side_effect = pywintypes.error(
+            5, "CreateFile", "Access is denied"
+        )
+        with patch.dict(sys.modules, {
+            "win32pipe": fake_pipe, "win32file": fake_file, "win32con": fake_con
+        }):
+            with self.assertRaises(ControlAccessDenied):
+                send_control("stop", p)
+
+    def test_existing_broker_is_upgraded_without_touching_rclone(self):
+        import sys
+        import zipfile
+        from unittest.mock import Mock
+        from service_control_installer import install_control_service
+
+        native = Mock()
+        native.SC_MANAGER_CONNECT = 1
+        native.SC_MANAGER_CREATE_SERVICE = 2
+        native.SERVICE_QUERY_CONFIG = 4
+        native.SERVICE_QUERY_STATUS = 8
+        native.SERVICE_START = 16
+        native.SERVICE_STOP = 32
+        native.SERVICE_CONTROL_STOP = 1
+        native.SERVICE_RUNNING = 4
+        native.SERVICE_STOPPED = 1
+        state = [native.SERVICE_RUNNING]
+        native.ControlService.side_effect = lambda *_: state.__setitem__(
+            0, native.SERVICE_STOPPED
+        )
+        native.StartService.side_effect = lambda *_: state.__setitem__(
+            0, native.SERVICE_RUNNING
+        )
+        query = Mock()
+        query.QueryServiceStatus.side_effect = lambda *_: (None, state[0])
+        native.OpenSCManager.return_value = "scm"
+        native.OpenService.return_value = "broker"
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            exe = base / "S3DriveControl.exe"
+            exe.write_bytes(b"old privileged helper")
+            bundle = base / "payload.zip"
+            with zipfile.ZipFile(bundle, "w") as z:
+                z.writestr("S3DriveControl.exe", b"new privileged helper")
+            config = [None] * 8
+            config[3] = '"' + str(exe) + '"'
+            config[7] = "LocalSystem"
+            native.QueryServiceConfig.return_value = tuple(config)
+            with patch.dict(sys.modules, {
+                "win32service": native, "win32serviceutil": query
+            }), patch("service_control_installer.service_executable_dir",
+                      return_value=base), patch(
+                          "service_control_installer.protect_directory"
+                      ), patch("service_control_installer.protect_file"):
+                install_control_service(bundle)
+            self.assertEqual(exe.read_bytes(), b"new privileged helper")
+            native.ControlService.assert_called_once_with("broker", 1)
+            native.StartService.assert_called_once_with("broker", None)
+            self.assertEqual(state[0], native.SERVICE_RUNNING)
+
     def test_broker_does_not_expose_admin_only_actions(self):
         from service_control import parse_request
         p = profile()

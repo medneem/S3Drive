@@ -152,6 +152,70 @@ jobs:
               raise AssertionError("Unenrolled profile was accepted")
           '@ | python -
             if ($LASTEXITCODE -ne 0) { throw "Broker named-pipe handshake failed" }
+            # Simulate a previous S3DriveControl.exe still in use by SCM:
+            # change only a DOS-stub message in a COPY of the valid PE, then
+            # start the legacy service from that fixed path. Upgrade the
+            # live service through the real installer and verify its image
+            # path switches without ever replacing the old executable.
+            @'
+          from pathlib import Path
+          import win32service
+          import win32serviceutil
+          from windows_service import protect_file, service_executable_dir
+          from service_control_installer import (
+              CONTROL_SERVICE, _set_service_executable, _wait_service_state,
+              install_control_service,
+          )
+          archive = Path("dist/S3DriveControl-bundled.zip")
+          base = service_executable_dir()
+          legacy = base / "S3DriveControl.exe"
+          current_exe = Path("dist/S3DriveControl.exe").read_bytes()
+          original = b"This program cannot be run in DOS mode"
+          replacement = b"This program cannot be run in DoS mode"
+          assert len(original) == len(replacement)
+          assert original in current_exe[:1024], "Missing expected PE DOS stub"
+          legacy_bytes = current_exe.replace(original, replacement, 1)
+          legacy.write_bytes(legacy_bytes)
+          protect_file(legacy)
+          scm = win32service.OpenSCManager(
+              None, None, win32service.SC_MANAGER_CONNECT
+          )
+          service = win32service.OpenService(
+              scm, CONTROL_SERVICE,
+              win32service.SERVICE_QUERY_CONFIG
+              | win32service.SERVICE_QUERY_STATUS
+              | win32service.SERVICE_START
+              | win32service.SERVICE_STOP
+              | win32service.SERVICE_CHANGE_CONFIG,
+          )
+          try:
+              win32service.ControlService(service, win32service.SERVICE_CONTROL_STOP)
+              _wait_service_state(
+                  win32serviceutil, win32service, win32service.SERVICE_STOPPED
+              )
+              _set_service_executable(win32service, service, legacy)
+              win32service.StartService(service, None)
+              _wait_service_state(
+                  win32serviceutil, win32service, win32service.SERVICE_RUNNING
+              )
+              print("Previous fixed-path broker running under SCM")
+              install_control_service(archive)
+              config = win32service.QueryServiceConfig(service)
+              installed = Path(config[3].strip('"'))
+              assert installed != legacy, config[3]
+              assert installed.name.startswith("S3DriveControl-"), installed
+              assert installed.read_bytes() == current_exe
+              assert legacy.read_bytes() == legacy_bytes
+              assert win32serviceutil.QueryServiceStatus(CONTROL_SERVICE)[1] == win32service.SERVICE_RUNNING
+              install_control_service(archive)
+              assert Path(win32service.QueryServiceConfig(service)[3].strip('"')) == installed
+              assert legacy.read_bytes() == legacy_bytes
+              print("Live SCM broker upgrade and second-run idempotency OK")
+          finally:
+              win32service.CloseServiceHandle(service)
+              win32service.CloseServiceHandle(scm)
+          '@ | python -
+            if ($LASTEXITCODE -ne 0) { throw "Running legacy broker upgrade failed" }
             # Regression: test with a true unprivileged local user, not the
             # admin runner account that masked SYNCHRONIZE in the pipe ACL.
             $secret = 'A9!' + [guid]::NewGuid().ToString('N') + 'z'

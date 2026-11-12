@@ -162,7 +162,9 @@ class ControlProtocolTests(unittest.TestCase):
             with self.assertRaises(ControlAccessDenied):
                 send_control("stop", p)
 
-    def test_existing_broker_is_upgraded_without_touching_rclone(self):
+    def test_existing_broker_is_upgraded_without_overwriting_running_exe(self):
+        """Windows may keep the old executable mapped after SERVICE_STOPPED."""
+        import hashlib
         import sys
         import zipfile
         from unittest.mock import Mock
@@ -175,7 +177,9 @@ class ControlProtocolTests(unittest.TestCase):
         native.SERVICE_QUERY_STATUS = 8
         native.SERVICE_START = 16
         native.SERVICE_STOP = 32
+        native.SERVICE_CHANGE_CONFIG = 64
         native.SERVICE_CONTROL_STOP = 1
+        native.SERVICE_NO_CHANGE = 0xFFFFFFFF
         native.SERVICE_RUNNING = 4
         native.SERVICE_STOPPED = 1
         state = [native.SERVICE_RUNNING]
@@ -191,13 +195,76 @@ class ControlProtocolTests(unittest.TestCase):
         native.OpenService.return_value = "broker"
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
-            exe = base / "S3DriveControl.exe"
-            exe.write_bytes(b"old privileged helper")
+            old = base / "S3DriveControl.exe"
+            old.write_bytes(b"old privileged helper")
             bundle = base / "payload.zip"
+            payload = b"new privileged helper"
             with zipfile.ZipFile(bundle, "w") as z:
-                z.writestr("S3DriveControl.exe", b"new privileged helper")
+                z.writestr("S3DriveControl.exe", payload)
             config = [None] * 8
-            config[3] = '"' + str(exe) + '"'
+            config[3] = '"' + str(old) + '"'
+            config[7] = "LocalSystem"
+            native.QueryServiceConfig.return_value = tuple(config)
+            expected = base / (
+                "S3DriveControl-" + hashlib.sha256(payload).hexdigest()[:16] + ".exe"
+            )
+            original_replace = __import__("os").replace
+
+            def deny_overwrite_of_locked_running_binary(source, target):
+                if Path(target) == old:
+                    raise PermissionError(5, "Access denied: EXE image remains mapped")
+                return original_replace(source, target)
+
+            with patch.dict(sys.modules, {
+                "win32service": native, "win32serviceutil": query
+            }), patch("service_control_installer.service_executable_dir",
+                      return_value=base), patch(
+                          "service_control_installer.protect_directory"
+                      ), patch("service_control_installer.protect_file"), patch(
+                          "service_control_installer.os.replace",
+                          side_effect=deny_overwrite_of_locked_running_binary):
+                install_control_service(bundle)
+            self.assertEqual(old.read_bytes(), b"old privileged helper")
+            self.assertEqual(expected.read_bytes(), payload)
+            self.assertEqual(state[0], native.SERVICE_RUNNING)
+            native.ControlService.assert_called_once_with("broker", 1)
+            native.StartService.assert_called_once_with("broker", None)
+            config_call = native.ChangeServiceConfig.call_args.args
+            self.assertEqual(len(config_call), 11)
+            self.assertEqual(config_call[0], "broker")
+            self.assertEqual(config_call[4], '"' + str(expected) + '"')
+
+    def test_upgraded_broker_repair_is_idempotent(self):
+        import sys
+        import hashlib
+        import zipfile
+        from unittest.mock import Mock
+        from service_control_installer import install_control_service
+
+        native = Mock()
+        native.SC_MANAGER_CONNECT = 1
+        native.SERVICE_QUERY_CONFIG = 4
+        native.SERVICE_QUERY_STATUS = 8
+        native.SERVICE_START = 16
+        native.SERVICE_STOP = 32
+        native.SERVICE_CHANGE_CONFIG = 64
+        native.SERVICE_NO_CHANGE = 0xFFFFFFFF
+        native.SERVICE_RUNNING = 4
+        native.SERVICE_STOPPED = 1
+        native.OpenService.return_value = "broker"
+        query = Mock()
+        query.QueryServiceStatus.return_value = (None, native.SERVICE_RUNNING)
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            payload = b"same executable"
+            digest = hashlib.sha256(payload).hexdigest()
+            current = base / f"S3DriveControl-{digest[:16]}.exe"
+            current.write_bytes(payload)
+            archive = base / "payload.zip"
+            with zipfile.ZipFile(archive, "w") as z:
+                z.writestr("S3DriveControl.exe", payload)
+            config = [None] * 8
+            config[3] = '"' + str(current) + '"'
             config[7] = "LocalSystem"
             native.QueryServiceConfig.return_value = tuple(config)
             with patch.dict(sys.modules, {
@@ -206,11 +273,108 @@ class ControlProtocolTests(unittest.TestCase):
                       return_value=base), patch(
                           "service_control_installer.protect_directory"
                       ), patch("service_control_installer.protect_file"):
-                install_control_service(bundle)
-            self.assertEqual(exe.read_bytes(), b"new privileged helper")
-            native.ControlService.assert_called_once_with("broker", 1)
-            native.StartService.assert_called_once_with("broker", None)
+                install_control_service(archive)
+            self.assertEqual(current.read_bytes(), payload)
+            native.ChangeServiceConfig.assert_not_called()
+            native.ControlService.assert_not_called()
+            native.StartService.assert_not_called()
+
+    def test_failed_new_broker_start_restores_previous_scm_image(self):
+        import sys
+        import zipfile
+        from unittest.mock import Mock
+        from service_control_installer import install_control_service
+
+        native = Mock()
+        native.SC_MANAGER_CONNECT = 1
+        native.SERVICE_QUERY_CONFIG = 4
+        native.SERVICE_QUERY_STATUS = 8
+        native.SERVICE_START = 16
+        native.SERVICE_STOP = 32
+        native.SERVICE_CHANGE_CONFIG = 64
+        native.SERVICE_CONTROL_STOP = 1
+        native.SERVICE_NO_CHANGE = 0xFFFFFFFF
+        native.SERVICE_RUNNING = 4
+        native.SERVICE_STOPPED = 1
+        state = [native.SERVICE_RUNNING]
+        native.ControlService.side_effect = lambda *_: state.__setitem__(
+            0, native.SERVICE_STOPPED
+        )
+        start_attempts = [0]
+
+        def start_service(*_):
+            start_attempts[0] += 1
+            if start_attempts[0] == 1:
+                raise OSError("new broker could not start")
+            state[0] = native.SERVICE_RUNNING
+
+        native.StartService.side_effect = start_service
+        native.OpenService.return_value = "broker"
+        query = Mock()
+        query.QueryServiceStatus.side_effect = lambda *_: (None, state[0])
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            legacy = base / "S3DriveControl.exe"
+            legacy.write_bytes(b"old executable")
+            archive = base / "broker.zip"
+            with zipfile.ZipFile(archive, "w") as z:
+                z.writestr("S3DriveControl.exe", b"new executable")
+            config = [None] * 8
+            config[3] = '"' + str(legacy) + '"'
+            config[7] = "LocalSystem"
+            native.QueryServiceConfig.return_value = tuple(config)
+            with patch.dict(sys.modules, {
+                "win32service": native, "win32serviceutil": query
+            }), patch("service_control_installer.service_executable_dir",
+                      return_value=base), patch(
+                          "service_control_installer.protect_directory"
+                      ), patch("service_control_installer.protect_file"):
+                with self.assertRaisesRegex(OSError, "could not start"):
+                    install_control_service(archive)
+            self.assertEqual(legacy.read_bytes(), b"old executable")
             self.assertEqual(state[0], native.SERVICE_RUNNING)
+            self.assertEqual(native.StartService.call_count, 2)
+            self.assertEqual(native.ChangeServiceConfig.call_count, 2)
+            self.assertEqual(
+                native.ChangeServiceConfig.call_args.args[4], '"' + str(legacy) + '"'
+            )
+
+    def test_unexpected_broker_binary_path_fails_without_scm_changes(self):
+        import sys
+        from unittest.mock import Mock
+        from service_control_installer import install_control_service
+
+        native = Mock()
+        native.SC_MANAGER_CONNECT = 1
+        native.SERVICE_QUERY_CONFIG = 4
+        native.SERVICE_QUERY_STATUS = 8
+        native.SERVICE_START = 16
+        native.SERVICE_STOP = 32
+        native.SERVICE_CHANGE_CONFIG = 64
+        native.SERVICE_RUNNING = 4
+        native.SERVICE_STOPPED = 1
+        native.OpenService.return_value = "broker"
+        query = Mock()
+        query.QueryServiceStatus.return_value = (None, native.SERVICE_RUNNING)
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            outside = base.parent / "unexpected-service.exe"
+            config = [None] * 8
+            config[3] = '"' + str(outside) + '"'
+            config[7] = "LocalSystem"
+            native.QueryServiceConfig.return_value = tuple(config)
+            bundle = base / "dummy.zip"
+            bundle.touch()
+            with patch.dict(sys.modules, {
+                "win32service": native, "win32serviceutil": query
+            }), patch("service_control_installer.service_executable_dir",
+                      return_value=base), patch(
+                          "service_control_installer.protect_directory"
+                      ):
+                with self.assertRaisesRegex(RuntimeError, "расположение"):
+                    install_control_service(bundle)
+            native.ChangeServiceConfig.assert_not_called()
+            native.ControlService.assert_not_called()
 
     def test_access_denied_repair_action_is_privileged_but_does_not_edit_mount(self):
         from service_admin import run_action

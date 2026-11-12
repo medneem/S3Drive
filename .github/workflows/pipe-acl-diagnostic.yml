@@ -1,0 +1,93 @@
+name: Diagnose Windows named pipe permissions (temporary)
+on:
+  pull_request:
+jobs:
+  pipe-acl:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13.17"
+      - name: Install Win32 API dependency
+        run: python -m pip install pywin32==312
+      - name: Inspect actual DACL and impersonate normal local user
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $username = "S3DrivePipeCI"
+          $password = 'A9!' + [guid]::NewGuid().ToString('N') + 'z'
+          $secure = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name $username -Password $secure -PasswordNeverExpires | Out-Null
+          try {
+            $env:S3DRIVE_CI_USERNAME = $username
+            $env:S3DRIVE_CI_PASSWORD = $password
+            @'
+          import os
+          import threading
+          import time
+          import win32security
+          from types import SimpleNamespace
+          from service_control import (
+              _make_pipe, serve, PIPE_NAME, send_control,
+              wake_server, EnrollmentRequired, ControlAccessDenied,
+          )
+          import win32file
+          pipe = _make_pipe()
+          try:
+              for read_method in ("handle", "path"):
+                  try:
+                      if read_method == "handle":
+                          sd = win32security.GetSecurityInfo(
+                              pipe, win32security.SE_FILE_OBJECT,
+                              win32security.DACL_SECURITY_INFORMATION,
+                          )
+                      else:
+                          sd = win32security.GetNamedSecurityInfo(
+                              PIPE_NAME, win32security.SE_FILE_OBJECT,
+                              win32security.DACL_SECURITY_INFORMATION,
+                          )
+                      acl = sd.GetSecurityDescriptorDacl()
+                      print("Actual pipe DACL via", read_method, [
+                          (win32security.ConvertSidToStringSid(acl.GetAce(i)[2]),
+                           hex(acl.GetAce(i)[1]))
+                          for i in range(acl.GetAceCount())
+                      ], flush=True)
+                  except Exception as exc:
+                      print("DACL inspection error", read_method, str(exc), flush=True)
+          finally:
+              win32file.CloseHandle(pipe)
+          stopping = threading.Event()
+          server = threading.Thread(target=serve, args=(stopping,), daemon=True)
+          server.start()
+          time.sleep(0.2)
+          token = win32security.LogonUser(
+              os.environ["S3DRIVE_CI_USERNAME"], os.environ["COMPUTERNAME"],
+              os.environ["S3DRIVE_CI_PASSWORD"],
+              win32security.LOGON32_LOGON_INTERACTIVE,
+              win32security.LOGON32_PROVIDER_DEFAULT,
+          )
+          try:
+              win32security.ImpersonateLoggedOnUser(token)
+              try:
+                  try:
+                      send_control("stop", SimpleNamespace(id="12345678-1234-1234-1234-123456789abc"))
+                  except EnrollmentRequired:
+                      print("NORMAL USER CONNECTED SUCCESSFULLY", flush=True)
+                  except ControlAccessDenied:
+                      print("NORMAL USER DENIED (reproduced)", flush=True)
+              finally:
+                  win32security.RevertToSelf()
+          finally:
+              token.Close()
+              stopping.set()
+              wake_server()
+              server.join(3)
+          '@ | python -
+            if ($LASTEXITCODE -ne 0) { throw "ACL diagnostic process failed" }
+          } finally {
+            Remove-Item Env:S3DRIVE_CI_PASSWORD -ErrorAction SilentlyContinue
+            Remove-Item Env:S3DRIVE_CI_USERNAME -ErrorAction SilentlyContinue
+            Remove-LocalUser -Name $username -ErrorAction SilentlyContinue
+          }

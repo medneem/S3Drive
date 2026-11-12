@@ -128,6 +128,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $name = "S3DriveControl"
+          $ciUser = "S3DrivePipeCI"
+          $createdUser = $false
           if (Get-Service -Name $name -ErrorAction SilentlyContinue) {
             throw "Unexpected S3DriveControl service already installed on runner"
           }
@@ -150,7 +152,42 @@ jobs:
               raise AssertionError("Unenrolled profile was accepted")
           '@ | python -
             if ($LASTEXITCODE -ne 0) { throw "Broker named-pipe handshake failed" }
+            # Regression: test with a true unprivileged local user, not the
+            # admin runner account that masked SYNCHRONIZE in the pipe ACL.
+            $secret = 'A9!' + [guid]::NewGuid().ToString('N') + 'z'
+            $secureSecret = ConvertTo-SecureString $secret -AsPlainText -Force
+            New-LocalUser -Name $ciUser -Password $secureSecret -PasswordNeverExpires | Out-Null
+            $createdUser = $true
+            $env:S3DRIVE_CI_USERNAME = $ciUser
+            $env:S3DRIVE_CI_PASSWORD = $secret
+            @'
+          import os
+          import win32security
+          from types import SimpleNamespace
+          from service_control import send_control, EnrollmentRequired
+          token = win32security.LogonUser(
+              os.environ["S3DRIVE_CI_USERNAME"], os.environ["COMPUTERNAME"],
+              os.environ["S3DRIVE_CI_PASSWORD"],
+              win32security.LOGON32_LOGON_INTERACTIVE,
+              win32security.LOGON32_PROVIDER_DEFAULT,
+          )
+          win32security.ImpersonateLoggedOnUser(token)
+          try:
+              try:
+                  send_control("stop", SimpleNamespace(id="12345678-1234-1234-1234-123456789abc"))
+              except EnrollmentRequired:
+                  print("Non-admin named-pipe read/write + SID impersonation OK")
+              else:
+                  raise AssertionError("Unenrolled profile was accepted by standard user")
+          finally:
+              win32security.RevertToSelf()
+              token.Close()
+          '@ | python -
+            if ($LASTEXITCODE -ne 0) { throw "Non-admin named-pipe connection failed" }
           } finally {
+            Remove-Item Env:S3DRIVE_CI_PASSWORD -ErrorAction SilentlyContinue
+            Remove-Item Env:S3DRIVE_CI_USERNAME -ErrorAction SilentlyContinue
+            if ($createdUser) { Remove-LocalUser -Name $ciUser -ErrorAction Stop }
             if (Get-Service -Name $name -ErrorAction SilentlyContinue) {
               Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
               & sc.exe delete $name | Out-Host

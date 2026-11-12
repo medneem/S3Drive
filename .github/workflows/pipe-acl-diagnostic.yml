@@ -34,6 +34,18 @@ jobs:
               wake_server, EnrollmentRequired, ControlAccessDenied,
           )
           import win32file
+          import service_control as control
+          # Test Windows Mandatory Integrity Control with explicit Medium
+          # pipe object label. The DACL remains narrowly scoped.
+          def medium_pipe_attributes():
+              attrs = control._original_pipe_attributes()
+              attrs.SECURITY_DESCRIPTOR = win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
+                  "D:P(A;;0x1f01ff;;;SY)(A;;0x1f01ff;;;BA)(A;;0x100003;;;AU)S:(ML;;NW;;;ME)",
+                  win32security.SDDL_REVISION_1,
+              )
+              return attrs
+          control._original_pipe_attributes = control._pipe_security_attributes
+          control._pipe_security_attributes = medium_pipe_attributes
           pipe = _make_pipe()
           try:
               for read_method in ("handle", "path", "kernel", "kernel-handle"):

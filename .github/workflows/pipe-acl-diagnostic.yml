@@ -36,9 +36,18 @@ jobs:
           import win32file
           pipe = _make_pipe()
           try:
-              for read_method in ("handle", "path"):
+              for read_method in ("handle", "path", "kernel", "kernel-handle"):
                   try:
-                      if read_method == "handle":
+                      if read_method == "kernel":
+                          sd = win32security.GetKernelObjectSecurity(
+                              pipe, win32security.DACL_SECURITY_INFORMATION,
+                          )
+                      elif read_method == "kernel-handle":
+                          sd = win32security.GetSecurityInfo(
+                              pipe, win32security.SE_KERNEL_OBJECT,
+                              win32security.DACL_SECURITY_INFORMATION,
+                          )
+                      elif read_method == "handle":
                           sd = win32security.GetSecurityInfo(
                               pipe, win32security.SE_FILE_OBJECT,
                               win32security.DACL_SECURITY_INFORMATION,

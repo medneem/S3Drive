@@ -313,7 +313,7 @@ def _sc(*args: str) -> None:
                 win32service.SERVICE_WIN32_OWN_PROCESS,
                 win32service.SERVICE_AUTO_START,
                 win32service.SERVICE_ERROR_NORMAL, options[1],
-                None, 0, options[5], None,
+                None, 0, None, options[5], None,
             )
         else:
             handle = win32service.OpenService(

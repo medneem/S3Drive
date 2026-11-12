@@ -40,7 +40,7 @@ jobs:
           def medium_pipe_attributes():
               attrs = control._original_pipe_attributes()
               attrs.SECURITY_DESCRIPTOR = win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
-                  "D:P(A;;0x1f01ff;;;SY)(A;;0x1f01ff;;;BA)(A;;0x100003;;;AU)S:(ML;;NW;;;ME)",
+                  "D:P(A;;0x1f01ff;;;SY)(A;;0x1f01ff;;;BA)(A;;GA;;;AU)S:(ML;;NW;;;ME)",
                   win32security.SDDL_REVISION_1,
               )
               return attrs

@@ -78,8 +78,31 @@ jobs:
               win32security.LOGON32_PROVIDER_DEFAULT,
           )
           try:
+              print("User token groups", [
+                  (win32security.ConvertSidToStringSid(sid), hex(flags))
+                  for sid, flags in win32security.GetTokenInformation(
+                      token, win32security.TokenGroups,
+                  ) if win32security.ConvertSidToStringSid(sid)
+                  in ("S-1-5-11", "S-1-1-0", "S-1-5-32-545", "S-1-5-32-544")
+              ], flush=True)
               win32security.ImpersonateLoggedOnUser(token)
               try:
+                  import win32pipe
+                  import win32con
+                  for mask in (1, 2, 3, 0x00100001, 0x00100002,
+                               0x00100003, 0x00120003, 0x0012019B):
+                      try:
+                          win32pipe.WaitNamedPipe(PIPE_NAME, 1500)
+                          h = win32file.CreateFile(
+                              PIPE_NAME, mask, 0, None, win32con.OPEN_EXISTING,
+                              0x00120000, None,
+                          )
+                          print("NONADMIN CREATEFILE SUCCESS", hex(mask), flush=True)
+                          win32file.CloseHandle(h)
+                      except Exception as exc:
+                          print("NONADMIN CREATEFILE DENIED", hex(mask),
+                                str(exc), flush=True)
+                      time.sleep(0.08)
                   try:
                       send_control("stop", SimpleNamespace(id="12345678-1234-1234-1234-123456789abc"))
                   except EnrollmentRequired:

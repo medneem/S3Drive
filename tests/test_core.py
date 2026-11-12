@@ -225,19 +225,21 @@ class MountTests(unittest.TestCase):
                     self.assertEqual(profiles.config_path().parent, directory.resolve())
                     self.assertEqual(profiles.config_path().name, "config.json")
 
-    def test_migrates_legacy_profiles_without_deleting_source(self):
+    def test_missing_portable_config_discards_legacy_without_import(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            record = asdict(sample(name="Мигрированный S3"))
+            record = asdict(sample(name="Устаревший S3"))
             record["access_key"] = "protected:" + record["access_key"][::-1]
             record["secret_key"] = "protected:" + record["secret_key"][::-1]
-            (root / "profiles.json").write_text(
-                json.dumps([record], ensure_ascii=False), encoding="utf-8"
+            legacy = root / "profiles.json"
+            legacy.write_text(json.dumps([record], ensure_ascii=False), encoding="utf-8")
+            portable = self.make_store(root / "config.json", legacy)
+            self.assertEqual(portable.load(), [])
+            self.assertFalse(legacy.exists())
+            self.assertEqual(
+                json.loads((root / "config.json").read_text(encoding="utf-8"))["profiles"],
+                [],
             )
-            portable = self.make_store(root / "config.json", root / "profiles.json")
-            self.assertEqual(portable.load()[0].name, "Мигрированный S3")
-            self.assertTrue((root / "profiles.json").exists())
-            self.assertEqual(json.loads((root / "config.json").read_text(encoding="utf-8"))["profiles"][0]["name"], "Мигрированный S3")
 
     def test_existing_config_has_priority_over_legacy(self):
         with tempfile.TemporaryDirectory() as td:
@@ -247,6 +249,16 @@ class MountTests(unittest.TestCase):
             portable = self.make_store(root / "config.json", legacy)
             portable.save([sample(name="Актуальный S3")])
             self.assertEqual(portable.load()[0].name, "Актуальный S3")
+            self.assertFalse(legacy.exists())
+
+    def test_invalid_legacy_json_is_discarded_without_parsing(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            legacy = root / "profiles.json"
+            legacy.write_text("{broken", encoding="utf-8")
+            store = self.make_store(root / "config.json", legacy)
+            self.assertEqual(store.load(), [])
+            self.assertFalse(legacy.exists())
 
     def test_bad_config_is_not_silently_overwritten(self):
         with tempfile.TemporaryDirectory() as td:

@@ -21,9 +21,13 @@ from windows_service import (
 CONTROL_SERVICE = "S3DriveControl"
 PIPE_NAME = r"\\.\pipe\S3DriveControl-v1"
 MAX_MESSAGE = 4096
-# Synchronous named-pipe I/O requires SYNCHRONIZE as well as read/write data.
-# Exclude FILE_CREATE_PIPE_INSTANCE (bit 0x4) to prevent client servers.
+# The client requests only R/W data and SYNCHRONIZE. On Windows, a pipe
+# DACL allowing those 3 bits alone still returns ERROR_ACCESS_DENIED to a
+# standard user. The server also grants read/write file metadata and
+# READ_CONTROL (confirmed by an actual non-admin Windows CI logon test).
+# Neither mask grants FILE_CREATE_PIPE_INSTANCE / FILE_APPEND_DATA (bit 0x4).
 PIPE_CLIENT_ACCESS = 0x00100003
+PIPE_CLIENT_ALLOWED = 0x0012019B
 _SID = re.compile(r"S-1-(?:[0-9]+-){1,15}[0-9]+\Z")
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _DRIVE = re.compile(r"[A-Z]:\Z")
@@ -210,10 +214,10 @@ def _pipe_security_attributes():
     acl = win32security.ACL()
     for sid in (system, admins):
         acl.AddAccessAllowedAce(win32security.ACL_REVISION, 0x001F01FF, sid)
-    # Synchronous read/write also needs SYNCHRONIZE; never grant
-    # FILE_CREATE_PIPE_INSTANCE (same bit as FILE_APPEND_DATA: 0x0004).
+    # Include the Windows file metadata rights needed for a synchronous
+    # standard-user CreateFile, but never FILE_CREATE_PIPE_INSTANCE (0x0004).
     acl.AddAccessAllowedAce(
-        win32security.ACL_REVISION, PIPE_CLIENT_ACCESS, authenticated
+        win32security.ACL_REVISION, PIPE_CLIENT_ALLOWED, authenticated
     )
     descriptor = win32security.SECURITY_DESCRIPTOR()
     descriptor.SetSecurityDescriptorDacl(True, acl, False)

@@ -212,8 +212,11 @@ class ServiceTests(unittest.TestCase):
                  patch("windows_service._choose_rc_port", return_value=45321), \
                  patch("windows_service._sc") as sc:
                 install_and_start(profile, source)
-            self.assertEqual(sc.call_args.args[0], "create")
-            command = sc.call_args.args[3]
+            self.assertEqual(sc.call_count, 2)
+            create_call, start_call = (call.args for call in sc.call_args_list)
+            self.assertEqual(create_call[0], "create")
+            self.assertEqual(start_call[0], "start")
+            command = create_call[3]
             self.assertIn(f"rclone-{sha[:16]}.exe", command)
             self.assertNotIn("rclone.exe mount", command)
 

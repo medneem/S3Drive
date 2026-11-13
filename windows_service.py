@@ -59,9 +59,46 @@ def service_executable_dir() -> Path:
     return Path(os.environ["PROGRAMDATA"]) / "S3Drive" / "bin"
 
 
-def service_rclone_path(profile_id: str) -> Path:
-    """Private per-profile service binary; never replace a running service's EXE."""
-    return service_dir(profile_id) / "rclone.exe"
+def service_rclone_path(profile_id: str, digest: str) -> Path:
+    """Immutable, content-addressed service EXE, isolated by profile."""
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("Некорректный SHA-256 служебного rclone.")
+    return service_dir(profile_id) / f"rclone-{digest[:16]}.exe"
+
+
+def install_service_rclone(profile_id: str, source: Path, digest: str) -> Path:
+    """Stage and verify a new EXE without overwriting a mapped Windows image.
+
+    A stopped Windows service may still retain its former rclone.exe image.
+    The old binary is left intact until the SCM configuration uses the new one.
+    """
+    import shutil
+
+    destination = service_rclone_path(profile_id, digest)
+    if (destination.is_symlink()
+            or (hasattr(destination, "is_junction") and destination.is_junction())):
+        raise RuntimeError("Недопустимая ссылка вместо служебного rclone.")
+    if destination.exists():
+        if not destination.is_file():
+            raise RuntimeError("Путь служебного rclone не является файлом.")
+        verify_rclone_hash(destination, digest)
+        protect_file(destination)
+        return destination
+
+    temporary = destination.parent / ("rclone-stage-" + secrets.token_hex(8) + ".tmp")
+    if temporary.exists() or temporary.is_symlink():
+        raise RuntimeError("Недопустимый временный файл rclone.")
+    try:
+        shutil.copy2(source, temporary)
+        verify_rclone_hash(temporary, digest)
+        protect_file(temporary)
+        # Windows os.rename never replaces an existing destination image.
+        # Unlike os.replace, this works even if the OLD executable is mapped.
+        os.rename(temporary, destination)
+        protect_file(destination)
+        return destination
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def drive_label_registry_path(drive: str) -> str:
@@ -415,19 +452,9 @@ def install_and_start(profile, source_rclone: Path) -> None:
     protect_directory(dest)
     # Copy to administrator-only location: the service binary path must never
     # point to a user-writable portable ZIP directory.
-    import shutil
-    binary = service_rclone_path(profile.id)
-    # Each service gets its own rclone copy; do not overwrite an EXE used
-    # by another running S3Drive service.
-    staged = dest / "rclone.exe.new"
-    try:
-        shutil.copy2(source_rclone, staged)
-        verify_rclone_hash(staged, expected_sha256)
-        protect_file(staged)
-        os.replace(staged, binary)
-    finally:
-        staged.unlink(missing_ok=True)
-    protect_file(binary)
+    # Reconfigure the SCM with an immutable, verified EXE path. In particular,
+    # never overwrite an old rclone.exe which Windows may still have mapped.
+    binary = install_service_rclone(profile.id, source_rclone, expected_sha256)
     config = dest / "rclone.conf"
     config.write_text(config_text(profile), encoding="utf-8")
     protect_file(config)

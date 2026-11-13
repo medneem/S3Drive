@@ -122,12 +122,103 @@ class ServiceTests(unittest.TestCase):
                 self.assertEqual(command.count("--s3-directory-markers"), 1)
 
     def test_service_rclone_binary_is_isolated_per_profile(self):
+        import hashlib
         from windows_service import service_rclone_path
         p1 = sample()
         p2 = sample()
+        sha = hashlib.sha256(b"bundled rclone").hexdigest()
         with patch("windows_service.service_dir", side_effect=lambda ident: Path("C:/ProgramData/S3Drive/services") / ident):
-            self.assertNotEqual(service_rclone_path(p1.id), service_rclone_path(p2.id))
-            self.assertEqual(service_rclone_path(p1.id).name, "rclone.exe")
+            self.assertNotEqual(service_rclone_path(p1.id, sha), service_rclone_path(p2.id, sha))
+            self.assertEqual(service_rclone_path(p1.id, sha).name, f"rclone-{sha[:16]}.exe")
+            with self.assertRaises(ValueError):
+                service_rclone_path(p1.id, "not-a-hash")
+
+    def test_install_service_rclone_never_replaces_mapped_legacy_exe(self):
+        import hashlib
+        from windows_service import install_service_rclone
+        profile = sample()
+        payload = b"new trusted rclone"
+        sha = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            legacy = root / "rclone.exe"
+            legacy.write_bytes(b"old locked service image")
+            source = root / "portable-rclone.exe"
+            source.write_bytes(payload)
+            with patch("windows_service.service_dir", return_value=root), \
+                 patch("windows_service.protect_file"), \
+                 patch("windows_service.os.replace", side_effect=PermissionError(5, "mapped EXE")):
+                installed = install_service_rclone(profile.id, source, sha)
+            self.assertEqual(installed.name, f"rclone-{sha[:16]}.exe")
+            self.assertEqual(installed.read_bytes(), payload)
+            self.assertEqual(legacy.read_bytes(), b"old locked service image")
+            self.assertFalse(list(root.glob("rclone-stage-*.tmp")))
+
+    def test_install_service_rclone_reuses_verified_immutable_exe(self):
+        import hashlib
+        from windows_service import install_service_rclone
+        profile = sample()
+        payload = b"official rclone executable"
+        sha = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "download.exe"
+            source.write_bytes(payload)
+            with patch("windows_service.service_dir", return_value=root), \
+                 patch("windows_service.protect_file"):
+                first = install_service_rclone(profile.id, source, sha)
+                with patch("shutil.copy2", side_effect=AssertionError("Must reuse installed EXE")):
+                    second = install_service_rclone(profile.id, source, sha)
+            self.assertEqual(first, second)
+            self.assertEqual(second.read_bytes(), payload)
+
+    def test_install_service_rclone_refuses_corrupted_existing_version(self):
+        import hashlib
+        from windows_service import install_service_rclone, service_rclone_path
+        profile = sample()
+        payload = b"trusted rclone executable"
+        sha = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "download.exe"
+            source.write_bytes(payload)
+            with patch("windows_service.service_dir", return_value=root), \
+                 patch("windows_service.protect_file"):
+                candidate = service_rclone_path(profile.id, sha)
+                candidate.write_bytes(b"altered executable")
+                with self.assertRaisesRegex(RuntimeError, "SHA-256"):
+                    install_service_rclone(profile.id, source, sha)
+                self.assertEqual(candidate.read_bytes(), b"altered executable")
+
+    def test_service_install_uses_versioned_rclone_in_scm_command(self):
+        import hashlib
+        from windows_service import install_and_start
+        profile = sample()
+        payload = b"verified rclone for install"
+        sha = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "portable-rclone.exe"
+            source.write_bytes(payload)
+            with patch.dict("os.environ", {"PROGRAMDATA": str(root)}), \
+                 patch("windows_service.service_status", return_value=None), \
+                 patch("windows_service.service_dir", side_effect=lambda ident: root / "services" / ident), \
+                 patch("windows_service.check_drive_free"), \
+                 patch("windows_service.verify_bundled_rclone", return_value=sha), \
+                 patch("windows_service.protect_directory", side_effect=lambda path: path.mkdir(parents=True, exist_ok=True)), \
+                 patch("windows_service.protect_file"), \
+                 patch("windows_service.protect_monitor_log"), \
+                 patch("windows_service.install_explorer_label"), \
+                 patch("windows_service._choose_rc_port", return_value=45321), \
+                 patch("windows_service._sc") as sc:
+                install_and_start(profile, source)
+            self.assertEqual(sc.call_count, 2)
+            create_call, start_call = (call.args for call in sc.call_args_list)
+            self.assertEqual(create_call[0], "create")
+            self.assertEqual(start_call[0], "start")
+            command = create_call[3]
+            self.assertIn(f"rclone-{sha[:16]}.exe", command)
+            self.assertNotIn("rclone.exe mount", command)
 
     def test_drive_label_registration_uses_exact_unicode_name(self):
         from windows_service import drive_label_registry_path

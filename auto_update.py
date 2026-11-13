@@ -179,6 +179,10 @@ def verify_archive(path: Path, digest: str, version: str) -> None:
             raise ValueError("Недопустимый тип файла обновления.")
         if sum(item.file_size for item in infos) > MAX_UNPACKED_BYTES:
             raise ValueError("Слишком большой распакованный архив.")
+        # VERSION.txt is a tiny release marker. Never decompress hundreds of
+        # megabytes into memory just to compare an untrusted version string.
+        if archive.getinfo("VERSION.txt").file_size > 128:
+            raise ValueError("Слишком большой VERSION.txt в архиве.")
         actual_version = archive.read("VERSION.txt").decode("utf-8-sig").strip()
         if actual_version != version:
             raise ValueError("Версия в архиве не совпадает с версией релиза.")

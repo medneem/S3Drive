@@ -38,9 +38,10 @@ fall back to an unrelated `rclone.exe` on `PATH`.
 
 ### Antivirus detections
 
-`S3DriveAdmin.exe` is a PyInstaller-packaged elevated helper that creates
+`S3DriveAdmin.exe` is a Nuitka-compiled elevated onefile helper that creates
 Windows services and protects their executable/configuration files under
-ProgramData. Behavior-based products such as Kaspersky may flag this activity
+ProgramData. The separately compiled S3DriveControl broker is bundled inside
+the helper; the GUI and updater still use PyInstaller. Behavior-based products such as Kaspersky may flag this activity
 as `PDM:Trojan.Win32.Generic`; this is not by itself proof of either infection
 or a false positive. The upstream rclone executable may be flagged separately
 as `Backdoor.Win64.Freyja.bc`. Keep antivirus protection enabled, preserve its
@@ -71,7 +72,7 @@ Connection keys are stored encrypted using Windows DPAPI. Do not publish your co
 
 ## Windows service and background mounts
 
-**Run as Windows service** installs a LocalSystem service that can start automatically with Windows and keep the drive available in Explorer while S3Drive is closed. UAC confirmation is required for service administration. Use **Stop service and drive** for safe shutdown, then **Remove service** if it is no longer needed; removing a stopped service keeps the saved profile.
+**Run as Windows service** installs a LocalSystem service that can start automatically with Windows and keep the drive available in Explorer while S3Drive is closed. Initial installation, reconfiguration, removal, and protected cache clearing require UAC. Once installed, ordinary start and safe stop use the SID-validated S3DriveControl broker without repeated UAC prompts. Use **Stop service and drive** for safe shutdown, then **Remove service** if it is no longer needed; removing a stopped service keeps the saved profile.
 
 An already-running service does not automatically receive new mount options after an application update. To apply them, first close edited files, wait for S3 transfers, and disconnect/reconnect via S3Drive. Do not force-stop or delete the cache of a service with pending uploads.
 

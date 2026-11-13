@@ -2,6 +2,20 @@
 
 [English](README.md) | **Русский**
 
+[![Windows Build](https://github.com/medneem/S3Drive/actions/workflows/build-windows.yml/badge.svg)](https://github.com/medneem/S3Drive/actions/workflows/build-windows.yml)
+[![S3 E2E](https://github.com/medneem/S3Drive/actions/workflows/s3-deletion-e2e.yml/badge.svg)](https://github.com/medneem/S3Drive/actions/workflows/s3-deletion-e2e.yml)
+[![Release](https://img.shields.io/github/v/release/medneem/S3Drive?label=release&logo=github&color=2ea44f)](https://github.com/medneem/S3Drive/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/medneem/S3Drive/total?label=downloads&logo=github)](https://github.com/medneem/S3Drive/releases)
+[![License](https://img.shields.io/github/license/medneem/S3Drive?label=license&color=informational)](LICENSE)
+
+[![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)](https://github.com/medneem/S3Drive/releases/latest)
+[![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![PySide6](https://img.shields.io/badge/PySide6-6.12-41CD52?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
+[![rclone](https://img.shields.io/badge/rclone-1.76.0-3D85C6)](https://rclone.org/)
+[![WinFsp](https://img.shields.io/badge/WinFsp-bundled-565E6A)](https://winfsp.dev/)
+[![Portable](https://img.shields.io/badge/build-portable-7A46C5)](https://github.com/medneem/S3Drive/releases/latest)
+[![Languages](https://img.shields.io/badge/languages-EN%20%7C%20RU-1EAD73)](README.ru.md)
+
 **S3Drive** — открытая портативная программа для Windows 10/11 x64, которая подключает S3-совместимое хранилище как диск Windows через [rclone](https://rclone.org/) и [WinFsp](https://winfsp.dev/). Интерфейс написан на Python 3.13 и PySide6.
 
 Документация актуализирована для **v1.5.6**. [Последний опубликованный релиз](https://github.com/medneem/S3Drive/releases/latest) · [Скачать v1.5.6](https://github.com/medneem/S3Drive/releases/tag/v1.5.6).

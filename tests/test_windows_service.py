@@ -190,6 +190,33 @@ class ServiceTests(unittest.TestCase):
                     install_service_rclone(profile.id, source, sha)
                 self.assertEqual(candidate.read_bytes(), b"altered executable")
 
+    def test_service_install_uses_versioned_rclone_in_scm_command(self):
+        import hashlib
+        from windows_service import install_and_start
+        profile = sample()
+        payload = b"verified rclone for install"
+        sha = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "portable-rclone.exe"
+            source.write_bytes(payload)
+            with patch.dict("os.environ", {"PROGRAMDATA": str(root)}), \
+                 patch("windows_service.service_status", return_value=None), \
+                 patch("windows_service.service_dir", side_effect=lambda ident: root / "services" / ident), \
+                 patch("windows_service.check_drive_free"), \
+                 patch("windows_service.verify_bundled_rclone", return_value=sha), \
+                 patch("windows_service.protect_directory", side_effect=lambda path: path.mkdir(parents=True, exist_ok=True)), \
+                 patch("windows_service.protect_file"), \
+                 patch("windows_service.protect_monitor_log"), \
+                 patch("windows_service.install_explorer_label"), \
+                 patch("windows_service._choose_rc_port", return_value=45321), \
+                 patch("windows_service._sc") as sc:
+                install_and_start(profile, source)
+            self.assertEqual(sc.call_args.args[0], "create")
+            command = sc.call_args.args[3]
+            self.assertIn(f"rclone-{sha[:16]}.exe", command)
+            self.assertNotIn("rclone.exe mount", command)
+
     def test_drive_label_registration_uses_exact_unicode_name(self):
         from windows_service import drive_label_registry_path
         self.assertTrue(drive_label_registry_path("S:").endswith(r"DriveIcons\S\DefaultLabel"))

@@ -18,6 +18,8 @@
 
 **S3Drive** — открытая портативная программа для Windows 10/11 x64, которая подключает S3-совместимое хранилище как диск Windows через [rclone](https://rclone.org/) и [WinFsp](https://winfsp.dev/). Интерфейс написан на Python 3.13 и PySide6.
 
+![Главное окно S3Drive v1.5.6](assets/readme/s3drive-main-window-v1.5.6.png)
+
 Документация актуализирована для **v1.5.6**. [Последний опубликованный релиз](https://github.com/medneem/S3Drive/releases/latest) · [Скачать v1.5.6](https://github.com/medneem/S3Drive/releases/tag/v1.5.6).
 
 ## Возможности

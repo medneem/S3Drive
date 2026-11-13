@@ -18,6 +18,8 @@
 
 **S3Drive** is an open-source portable app for Windows 10/11 x64 that mounts S3-compatible object storage as a Windows drive using [rclone](https://rclone.org/) and [WinFsp](https://winfsp.dev/). The GUI uses Python 3.13 and PySide6.
 
+![S3Drive v1.5.6 main window](assets/readme/s3drive-main-window-v1.5.6.png)
+
 Documentation reflects **v1.5.6**. [Latest published release](https://github.com/medneem/S3Drive/releases/latest) · [S3Drive v1.5.6](https://github.com/medneem/S3Drive/releases/tag/v1.5.6).
 
 ## Features

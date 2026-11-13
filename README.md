@@ -2,109 +2,90 @@
 
 **English** | [Русский](README.ru.md)
 
-S3Drive is an open-source, portable Windows application that mounts S3-compatible storage as a Windows drive using [rclone](https://rclone.org/) and [WinFsp](https://winfsp.dev/). Built with Python 3.13 and PySide6.
+**S3Drive** is an open-source portable app for Windows 10/11 x64 that mounts S3-compatible object storage as a Windows drive using [rclone](https://rclone.org/) and [WinFsp](https://winfsp.dev/). The GUI uses Python 3.13 and PySide6.
 
-**Interface languages:** English (default) and Russian. Click **Settings → Interface language**, select a language, and save. The choice persists in config.json across launches and does not disconnect running drives.
+Documentation reflects **v1.5.6**. [Latest published release](https://github.com/medneem/S3Drive/releases/latest) · [S3Drive v1.5.6](https://github.com/medneem/S3Drive/releases/tag/v1.5.6).
 
 ## Features
 
-- Multiple S3 connection profiles: endpoint, bucket, access and secret key, custom name, region, path-style option, and drive letter.
-- S3-compatible HTTP(S) services including QNAP and MinIO.
-- Optional bucket: leave empty to mount the S3 account root. Accessible buckets appear as folders, provided the credentials have ListBuckets / s3:ListAllMyBuckets permission.
-- Windows network drive via WinFsp and rclone; custom volume name and a unique UNC path per mount.
-- Explorer uses the configured profile name without showing the private UNC server identifier in parentheses. S3Drive stores the network-drive display name under the current Windows user's Explorer MountPoints2 registry entry; the unique UNC path and network-drive semantics remain unchanged.
-- Windows service mode using LocalSystem, with Windows autostart. The drive can stay mounted independently of the GUI, including after a reboot.
-- Optional user background mode, which keeps a drive mounted after closing S3Drive. This mode does not auto-reconnect after reboot.
-- VFS writes cache, safe disconnect, and guarded cache cleanup that avoids discarding queued or unsent writes.
-- Separate S3 upload monitor showing pending and active uploads, file names, progress, speed, and remaining time. Windows Explorer handles download progress.
-- Optional desktop shortcut and opening the drive after a successful connection.
-- Access Key and Secret Key encrypted with Windows DPAPI in config.json.
-- Single-instance interface without a tray icon. A duplicate launch cannot start a second GUI; it asks the existing window to restore and come forward (Windows-session mutex and activation event).
-- Update button appears when a newer stable GitHub Release is found. Downloads and installation require an explicit click; the official archive is SHA-256 verified. While downloading, the Update button shows a rotating spinner and percentage based on bytes received, followed by a distinct SHA-256 verification state.
-- English and Russian interface and setup documentation.
-
-## Requirements
-
-- Windows 10 or 11, x64.
-- WinFsp driver. The release ZIP contains the WinFsp installer; S3Drive offers to install it if missing.
-- S3-compatible credentials and endpoint, and permission to create config.json beside S3Drive.exe.
-
-rclone.exe is bundled with the portable ZIP. S3Drive pins the SHA-256 of
-the official Windows rclone 1.76.0 executable and verifies it before launching
-a drive or copying the binary into a Windows service. The Windows CI checks
-this digest against the executable extracted from the checksum-verified
-upstream archive. Missing or modified rclone is rejected; S3Drive does not
-fall back to an unrelated `rclone.exe` on `PATH`.
-
-### Antivirus detections
-
-`S3DriveAdmin.exe` is a Nuitka-compiled elevated onefile helper that creates
-Windows services and protects their executable/configuration files under
-ProgramData. The separately compiled S3DriveControl broker is bundled inside
-the helper; the GUI and updater still use PyInstaller. Behavior-based products such as Kaspersky may flag this activity
-as `PDM:Trojan.Win32.Generic`; this is not by itself proof of either infection
-or a false positive. The upstream rclone executable may be flagged separately
-as `Backdoor.Win64.Freyja.bc`. Keep antivirus protection enabled, preserve its
-event report, and do not restore or execute quarantined files until reviewed.
-Check the full official S3Drive Release ZIP and hashes, and submit both
-samples and detection logs to [Kaspersky OpenTIP](https://opentip.kaspersky.com/)
-or Kaspersky technical support for independent analysis. A release hash or
-successful unit test is not an antivirus verdict. Code signing is recommended
-for future releases, but requires a genuine publisher certificate.
+- Multiple profiles with a display name, Endpoint, Access Key, Secret Key, region, path-style setting, optional bucket, and Windows drive letter. Works with HTTP(S) S3-compatible providers such as QNAP and MinIO.
+- Leave Bucket blank to mount the S3 account root: accessible buckets become folders, provided the credentials allow `ListBuckets` / `s3:ListAllMyBuckets`.
+- WinFsp network drives with a unique UNC path and the friendly profile name in Explorer, without exposing the internal network-share identifier in the display name.
+- Ordinary interactive-user mounts, background mounts after closing the GUI, or Windows services that start automatically after reboot.
+- rclone VFS write caching (`writes`), safe disconnect with upload-queue checks, and guarded cache clearing.
+- An S3 **upload** progress window showing queued and active files, transferred bytes, speed, percentage, and remaining time. Windows Explorer provides the normal download UI; S3Drive's own monitor runs only while the GUI is open.
+- Optional desktop shortcut and open-drive-after-connect actions.
+- English (default) and Russian interface; choose a language in **Settings**.
+- S3 credentials encrypted using Windows DPAPI in the portable `config.json`.
+- A single GUI instance per Windows user session; a second launch activates the existing window. No tray icon.
+- Opt-in installation of verified stable GitHub Releases using an Update button.
 
 ## Installation and first use
 
-1. Download the latest ZIP from [GitHub Releases](https://github.com/medneem/S3Drive/releases) and extract **all files** to one writable folder. Do not run S3Drive directly inside the ZIP.
-2. Start S3Drive.exe as a normal Windows user, not as administrator.
-3. If WinFsp is missing, accept the install prompt, finish installing the bundled MSI, and run S3Drive again.
-4. Enter an Endpoint, Access Key, Secret Key, optional Bucket, and drive letter. Enable Path-style for servers that require it.
-5. Select the desired shortcut, open-after-mount, and background/service options.
-6. Click **Save**, then **Connect** and wait for the drive to appear in Explorer.
-7. Open **Settings** to select English or Русский; the setting is remembered.
+1. Download the [latest Windows x64 ZIP](https://github.com/medneem/S3Drive/releases/latest) and **extract the entire archive** into a writable folder. Do not launch from inside the ZIP.
+2. Run `S3Drive.exe` as a **standard Windows user**, not permanently as administrator.
+3. If WinFsp is missing, S3Drive offers to install the bundled `winfsp-2.2.26215.msi`. The MSI requires UAC. Finish installing WinFsp, then launch S3Drive again.
+4. Create a profile: enter an S3 URL (`http://...` or `https://...`), access credentials, drive letter, and optionally a bucket name. QNAP S3 commonly needs **Path-style**. Use HTTP only on a trusted network.
+5. Optionally select the shortcut, open-after-connect, or Windows service settings; click **Save**, then **Connect**.
 
-For step-by-step help see [README_SETUP.txt](README_SETUP.txt) (English) and [README_SETUP_RU.txt](README_SETUP_RU.txt) (Russian).
+The release already includes the SHA-256-verified **rclone 1.76.0** binary and WinFsp installer; do not install a separate rclone executable. See [README_SETUP.txt](README_SETUP.txt) for first-run instructions.
 
-## Configuration and language
+## Mount modes
 
-A portable config.json lives beside S3Drive.exe and is the **only source of connection profiles**. It stores profiles and UI language. If it is absent, an empty config is created; no profiles are imported from the obsolete `%LOCALAPPDATA%\\S3Drive\\profiles.json`, which is removed at startup. Profiles previously copied into config.json remain unchanged. The top-level language setting is "en" by default or "ru" for Russian. Older config.json files without this property automatically use English.
+| Mode | After closing S3Drive | After Windows reboot | Administrator consent |
+| --- | --- | --- | --- |
+| Ordinary user mount | Disconnects on normal GUI shutdown | No automatic reconnect | Not required |
+| Keep drive connected | rclone remains active under the current user | No automatic reconnect | Not required |
+| Windows service | Drive remains mounted and visible in Explorer | Service starts automatically | UAC for installation and administrative changes |
 
-Connection keys are stored encrypted using Windows DPAPI. Do not publish your config.json. DPAPI encryption is tied to Windows protection and cannot simply be decrypted on another machine/account. Changing the UI language does not touch the mounted drive or service state.
+**Windows service.** Enable **Run as Windows service**, save the profile, and click **Connect**. On initial setup, the UAC-approved `S3DriveAdmin.exe` installs a per-profile `LocalSystem` service and a protected `S3DriveControl` controller. Once the profile owner is enrolled, normal **Connect** and **Stop service and drive** requests go through an SID-validated local named pipe **without repeated UAC**. Changing service settings, removing a service, and clearing a protected VFS cache still require UAC. Older installations may require one-time enrollment.
 
-## Windows service and background mounts
+**Protected executables and secrets.** Per-profile rclone, the S3 configuration, and the rclone control password live in a restricted `%ProgramData%\S3Drive` directory. Since v1.5.6, installed service rclone executables use immutable names such as `rclone-<hash>.exe`. The previous image is never overwritten if Windows still has it mapped. The controller has a similar side-by-side upgrade mechanism. Updating the desktop app does **not** stop running services, replace their executables, or change their mount arguments; safely stop and reconnect the service in S3Drive to apply changed versions or settings.
 
-**Run as Windows service** installs a LocalSystem service that can start automatically with Windows and keep the drive available in Explorer while S3Drive is closed. Initial installation, reconfiguration, removal, and protected cache clearing require UAC. Once installed, ordinary start and safe stop use the SID-validated S3DriveControl broker without repeated UAC prompts. Use **Stop service and drive** for safe shutdown, then **Remove service** if it is no longer needed; removing a stopped service keeps the saved profile.
+**Security boundary.** A service-mounted drive can be accessed by other local Windows users. WinFsp uses `FileSecurity=D:P(A;;FA;;;WD)` (Everyone/full access) for the mounted files, subject to S3 backend permissions. Do not use service mode for buckets that must be isolated from other users of the same PC. Avoid stopping services directly via `services.msc` or `sc.exe`: that bypasses S3Drive's pending-upload checks.
 
-An already-running service does not automatically receive new mount options after an application update. To apply them, first close edited files, wait for S3 transfers, and disconnect/reconnect via S3Drive. Do not force-stop or delete the cache of a service with pending uploads.
+**User background mode.** **Keep drive connected after closing the app** leaves rclone running in the current Windows session. On the next GUI launch, S3Drive can recover control via its authenticated local API; it does not automatically reconnect after a reboot. The control password in `%LOCALAPPDATA%\S3Drive\background.json` is DPAPI-protected.
 
-**Keep drive connected after closing the app** keeps an ordinary user mount in the background without installing a service. This mode does not provide reconnection after a Windows reboot. S3Drive does not display a tray icon or transfer popup after the GUI closes.
+## Configuration, drive labels, and data safety
 
-## S3 filesystem behavior and safety
+`config.json` next to `S3Drive.exe` is the **only** profile store. It contains the language setting (`en` or `ru`), startup update-check setting, and profiles with DPAPI-encrypted S3 credentials. If missing, an empty configuration is created. The obsolete `%LOCALAPPDATA%\S3Drive\profiles.json` is no longer imported and is deleted at startup. Do not publish `config.json`; DPAPI-protected data generally cannot be decrypted by simply moving the file to another Windows installation or account.
 
-S3 is object storage, not NTFS. A "folder" may be an object prefix or a zero-byte directory marker. S3Drive configures rclone to handle directory markers and has S3 directory deletion regression tests, but server permissions and S3 semantics still apply.
+Explorer displays the chosen profile name rather than the internal UNC hash. S3Drive also writes the user-visible network label in the user's `Explorer\MountPoints2` settings and passes the volume name through WinFsp mount options. Explorer may cache an older name until its view refreshes. Reconnect an existing Windows service after changing its mount settings.
 
-In an account-root mount (bucket left blank), each top-level folder represents a **real bucket**. Creating or deleting such a folder can create or delete a bucket, if the account has permission. Use caution.
+S3 is **object storage, not NTFS**. Renames can involve copy-and-delete operations; concurrent mutations by other S3 clients are not atomic. When mounting an S3 account root, top-level folders represent **real buckets** and deleting such a folder may delete a bucket if permissions allow.
 
-The VFS write cache can hold data that has not yet reached S3. Use **Clear cache** in the app only after pending transfers have been checked. Do not manually delete cached files while any upload may be outstanding. Avoid storing live databases or active Git working trees on S3 mounts.
+S3Drive uses `--s3-directory-markers` and `--dir-cache-time 0s` to handle marker objects and avoid stale directory listings. This can increase S3 LIST requests and **cannot guarantee** consistency during concurrent changes on the server.
 
-## Updating S3Drive
+Interactive and service mounts use `--vfs-cache-mode writes` and `--vfs-write-back 0s`. Before disconnecting, S3Drive checks pending, active, or failed uploads and refuses unsafe shutdown. **Never forcibly stop rclone or delete its VFS cache by hand.** **Clear cache** performs additional safety checks and refuses to clear an offline or crashed mount. Verify important deletions and uploads directly against the S3 server.
 
-By default, S3Drive checks for a newer stable GitHub Release at startup. In **Settings** you can disable **Check for new versions at startup** (saved in `config.json`), or click **Check for updates** whenever you want, even when automatic checks are disabled. When `api.github.com` is unreachable, the updater checks the official GitHub Releases page instead. If a newer version exists, it reads the `S3Drive-update.json` sidecar asset from that release to obtain the exact ZIP SHA-256. It never installs a ZIP when verified metadata is missing. A failed automatic check is retried after five minutes; manual check errors are shown in a dialog. Offline S3 mounts are unaffected. **Update** appears in the main window only when a newer release is found; nothing downloads automatically.
+Do not use an S3 mount for live databases, active Git working trees, or files concurrently edited by multiple users.
 
-The packaged rclone version is stable **1.76.0**, which fixes deletion of account-root buckets when S3 directory markers are enabled.
+## Updates
 
-After confirmation, S3Drive downloads and verifies the official release ZIP, closes safely, and launches S3DriveUpdater.exe. The GUI restores Qt's normal last-window shutdown setting and schedules a clean quit before the updater waits for the old PID to exit. If an update fails, the window is shown again. The updater preserves config.json, service-specific rclone binaries, and VFS caches. If a user background mount is active, the update can be postponed until it is safely disconnected.
+Stable releases check GitHub Releases by default when the app starts. In **Settings**, disable **Check for new versions at startup** or use **Check for updates** manually. Development builds with a `-dev.N` suffix do not perform automatic release checks. If the GitHub API is unavailable, S3Drive can fall back to the official Releases page and `S3Drive-update.json` manifest.
 
-Older S3Drive distributions without S3DriveUpdater.exe require extracting a full new ZIP manually while preserving config.json.
+No update is downloaded until **Update** is clicked. The updater checks the ZIP's size, SHA-256, exact file set, and `VERSION.txt`. The separate `S3DriveUpdater.exe` waits for the GUI to exit, replaces only application files, and attempts rollback if replacement fails. `config.json`, installed services, their private rclone executables, and VFS caches are preserved. If a user background mount is active, installation waits for a safe disconnect. Older packages without `S3DriveUpdater.exe` require a full manual ZIP extraction while preserving `config.json`.
 
 ## Development and testing
 
-The project runs on Python 3.13 and PySide6. Install dependencies using requirements-build.txt, then run:
+- Python **3.13**, PySide6 **6.12.0**, pywin32 **312**; PyInstaller builds the GUI and updater, and Nuitka builds the elevated administrator helper and protected controller.
+- GitHub Actions [Build Windows](https://github.com/medneem/S3Drive/actions/workflows/build-windows.yml) builds the portable Windows ZIP, runs the unittest suite **three times**, verifies Windows EXE metadata and hashes, and smoke-tests the `S3DriveControl` Windows SCM service.
+- The separate [S3 deletion E2E workflow](https://github.com/medneem/S3Drive/actions/workflows/s3-deletion-e2e.yml) uses real WinFsp mounts with **an isolated local Moto S3 backend**, rather than a real QNAP server. See [docs/S3-DELETE-REPRO.md](docs/S3-DELETE-REPRO.md).
 
-    python -m unittest discover -s tests -v
-    python -m compileall -q main.py localization.py profiles.py tests
+```powershell
+py -3.13 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements-build.txt
+python -m pip install -r requirements-admin-build.txt
+python -m unittest discover -s tests -v
+```
 
-GitHub Actions builds a Windows x64 portable ZIP and runs tests in three verification passes. Pushes to main **do not create releases**; releases are published only after an explicitly requested manual workflow. The repository also includes separate Windows/S3 directory-deletion integration tests.
+Pushing to `main` **does not create a Git tag or publish a release**. Publication requires explicit owner approval and a manual **Build Windows** workflow run with a `release_version` input (SemVer without `v`). See [GitHub Releases](https://github.com/medneem/S3Drive/releases) for change history and [docs/](docs/) for historical investigations.
 
-For technical details see the [docs directory](docs/), [third-party notices](THIRD_PARTY_NOTICES.md), [rclone license](third_party/RCLONE_LICENSE.txt), and [LICENSE](LICENSE).
+## Antivirus detections
 
-Project: https://github.com/medneem/S3Drive
+`S3DriveAdmin.exe` performs elevated Windows SCM operations. Behavior-based antivirus products may flag it (for example `PDM:Trojan.Win32.Generic`); the bundled upstream `rclone.exe` can be flagged separately. **A passing CI run or matching SHA-256 does not prove that a detection is false.** Keep antivirus enabled, compare files against the official release, and retain the detection report for review. If needed, consult [Kaspersky OpenTIP](https://opentip.kaspersky.com/) or the antivirus vendor. Never include `config.json` or S3 credentials in a report. The project's own executables are not currently publisher-code-signed.
+
+## License
+
+MIT — [LICENSE](LICENSE). Dependency notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [RCLONE_LICENSE.txt](third_party/RCLONE_LICENSE.txt).

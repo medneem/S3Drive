@@ -214,6 +214,14 @@ class ArchiveTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     verify_archive(path, hashlib.sha256(payload).hexdigest(), "1.4.0")
 
+    def test_archive_rejects_oversized_version_metadata(self):
+        payload = bundle_bytes(additions={"VERSION.txt": b"1.4.0\n" + b" " * 256})
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "archive.zip"
+            path.write_bytes(payload)
+            with self.assertRaisesRegex(ValueError, "VERSION.txt"):
+                verify_archive(path, hashlib.sha256(payload).hexdigest(), "1.4.0")
+
     def test_archive_rejects_wrong_version(self):
         payload = bundle_bytes("1.3.0")
         with tempfile.TemporaryDirectory() as td:

@@ -122,12 +122,73 @@ class ServiceTests(unittest.TestCase):
                 self.assertEqual(command.count("--s3-directory-markers"), 1)
 
     def test_service_rclone_binary_is_isolated_per_profile(self):
+        import hashlib
         from windows_service import service_rclone_path
         p1 = sample()
         p2 = sample()
+        sha = hashlib.sha256(b"bundled rclone").hexdigest()
         with patch("windows_service.service_dir", side_effect=lambda ident: Path("C:/ProgramData/S3Drive/services") / ident):
-            self.assertNotEqual(service_rclone_path(p1.id), service_rclone_path(p2.id))
-            self.assertEqual(service_rclone_path(p1.id).name, "rclone.exe")
+            self.assertNotEqual(service_rclone_path(p1.id, sha), service_rclone_path(p2.id, sha))
+            self.assertEqual(service_rclone_path(p1.id, sha).name, f"rclone-{sha[:16]}.exe")
+            with self.assertRaises(ValueError):
+                service_rclone_path(p1.id, "not-a-hash")
+
+    def test_install_service_rclone_never_replaces_mapped_legacy_exe(self):
+        import hashlib
+        from windows_service import install_service_rclone
+        profile = sample()
+        payload = b"new trusted rclone"
+        sha = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            legacy = root / "rclone.exe"
+            legacy.write_bytes(b"old locked service image")
+            source = root / "portable-rclone.exe"
+            source.write_bytes(payload)
+            with patch("windows_service.service_dir", return_value=root), \
+                 patch("windows_service.protect_file"), \
+                 patch("windows_service.os.replace", side_effect=PermissionError(5, "mapped EXE")):
+                installed = install_service_rclone(profile.id, source, sha)
+            self.assertEqual(installed.name, f"rclone-{sha[:16]}.exe")
+            self.assertEqual(installed.read_bytes(), payload)
+            self.assertEqual(legacy.read_bytes(), b"old locked service image")
+            self.assertFalse(list(root.glob("rclone-stage-*.tmp")))
+
+    def test_install_service_rclone_reuses_verified_immutable_exe(self):
+        import hashlib
+        from windows_service import install_service_rclone
+        profile = sample()
+        payload = b"official rclone executable"
+        sha = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "download.exe"
+            source.write_bytes(payload)
+            with patch("windows_service.service_dir", return_value=root), \
+                 patch("windows_service.protect_file"):
+                first = install_service_rclone(profile.id, source, sha)
+                with patch("shutil.copy2", side_effect=AssertionError("Must reuse installed EXE")):
+                    second = install_service_rclone(profile.id, source, sha)
+            self.assertEqual(first, second)
+            self.assertEqual(second.read_bytes(), payload)
+
+    def test_install_service_rclone_refuses_corrupted_existing_version(self):
+        import hashlib
+        from windows_service import install_service_rclone, service_rclone_path
+        profile = sample()
+        payload = b"trusted rclone executable"
+        sha = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "download.exe"
+            source.write_bytes(payload)
+            with patch("windows_service.service_dir", return_value=root), \
+                 patch("windows_service.protect_file"):
+                candidate = service_rclone_path(profile.id, sha)
+                candidate.write_bytes(b"altered executable")
+                with self.assertRaisesRegex(RuntimeError, "SHA-256"):
+                    install_service_rclone(profile.id, source, sha)
+                self.assertEqual(candidate.read_bytes(), b"altered executable")
 
     def test_drive_label_registration_uses_exact_unicode_name(self):
         from windows_service import drive_label_registry_path

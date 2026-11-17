@@ -42,7 +42,7 @@ def mount_command(profile: Profile, executable: str, cache_dir: Path, port: int)
     if not 1 <= port <= 65535:
         raise ValueError("Некорректный порт управления.")
     return [
-        executable, "mount", f"{REMOTE}:{profile.bucket}", profile.drive,
+        executable, "mount", f"{REMOTE}:{profile.bucket.strip('/')}", profile.drive,
         "--vfs-cache-mode", "writes",
         # Start upload as soon as the local writer closes a file. This reduces
         # the race window with deletion by another S3 client, but cannot

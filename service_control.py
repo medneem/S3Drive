@@ -73,11 +73,20 @@ def current_user_sid() -> str:
         token.Close()
 
 
+def _settings_fingerprint(config: str, mount_source: str) -> str:
+    # The installed SCM command owns the rclone mount source, which is not
+    # included in rclone.conf. Include it to detect changes to bucket/prefix.
+    payload = "s3drive-service-settings-v2\0" + config + "\0" + mount_source
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def config_fingerprint(profile) -> str:
-    return hashlib.sha256(config_text(profile).encode("utf-8")).hexdigest()
+    profile.validate()
+    return _settings_fingerprint(config_text(profile), profile.bucket.strip("/"))
 
 
-def enroll_profile(profile_id: str, owner_sid: str, *, drive: str) -> None:
+def enroll_profile(profile_id: str, owner_sid: str, *, drive: str,
+                   mount_source: str | None = None) -> None:
     """Executed only after explicit UAC consent, in the protected service folder.
 
     Enroll the configuration actually installed, not an arbitrary GUI value.
@@ -92,7 +101,13 @@ def enroll_profile(profile_id: str, owner_sid: str, *, drive: str) -> None:
     if config.is_symlink() or not config.is_file():
         raise FileNotFoundError("Защищённая конфигурация службы отсутствует.")
     # Text mode normalizes Windows CRLF to LF, matching config_text(profile).
-    fingerprint = hashlib.sha256(config.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+    installed_config = config.read_text(encoding="utf-8")
+    if mount_source is None:
+        # Legacy setup-control does not know the installed SCM mount path.
+        # Do not guess it. A v2 client will require a verified UAC reinstall.
+        fingerprint = hashlib.sha256(installed_config.encode("utf-8")).hexdigest()
+    else:
+        fingerprint = _settings_fingerprint(installed_config, mount_source)
     payload = {"owner_sid": owner_sid, "fingerprint": fingerprint, "drive": drive}
     temp = root / "owner.json.tmp"
     target = root / "owner.json"

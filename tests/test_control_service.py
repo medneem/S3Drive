@@ -58,12 +58,38 @@ class ControlProtocolTests(unittest.TestCase):
             (root / "rclone.conf").write_text(config_text(p), encoding="utf-8")
             with patch("service_control.service_dir", return_value=root), \
                  patch("service_control.protect_file"):
-                enroll_profile(p.id, "S-1-5-21-100-200-300-1000", drive=p.drive)
+                enroll_profile(p.id, "S-1-5-21-100-200-300-1000", drive=p.drive,
+                               mount_source=p.bucket)
                 saved = load_enrollment(p.id)
                 self.assertEqual(saved["owner_sid"], "S-1-5-21-100-200-300-1000")
                 self.assertEqual(saved["fingerprint"], config_fingerprint(p))
                 self.assertEqual(saved["drive"], "S:")
                 self.assertNotIn("secret", (root / "owner.json").read_text("utf-8"))
+
+    def test_bucket_path_change_requires_service_reconfiguration(self):
+        from service_control import config_fingerprint, handle_request
+        p = profile()
+        original_fingerprint = config_fingerprint(p)
+        p.bucket = "/test-bucket/medneem/"
+        new_fingerprint = config_fingerprint(p)
+        self.assertNotEqual(original_fingerprint, new_fingerprint)
+        self.assertEqual(new_fingerprint, config_fingerprint(
+            new_profile(
+                name=p.name, endpoint=p.endpoint, bucket="test-bucket/medneem",
+                access_key=p.access_key, secret_key=p.secret_key, drive=p.drive,
+            )
+        ))
+        owner = "S-1-5-21-100-200-300-1000"
+        metadata = {"owner_sid": owner, "fingerprint": original_fingerprint, "drive": "S:"}
+        with patch("service_control.load_enrollment", return_value=metadata), \
+             patch("service_control.service_status", return_value=SERVICE_STOPPED), \
+             patch("service_control._sc") as sc:
+            with self.assertRaisesRegex(RuntimeError, "настройки"):
+                handle_request(
+                    {"action": "start", "profile_id": p.id, "fingerprint": new_fingerprint},
+                    owner,
+                )
+            sc.assert_not_called()
 
     def test_cannot_enroll_without_protected_configuration(self):
         from service_control import enroll_profile

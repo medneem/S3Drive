@@ -935,7 +935,13 @@ class MainWindow(QMainWindow):
                     except (ControlUnavailable, EnrollmentRequired):
                         # One-time migration of services installed before v1.5.5.
                         run_admin("setup-control", profile.id)
-                        send_control("start", profile)
+                        try:
+                            send_control("start", profile)
+                        except ReconfigurationRequired:
+                            # Legacy enrollment does not attest the installed
+                            # bucket/path; reinstall once rather than mounting
+                            # a potentially different directory silently.
+                            run_admin("install", profile.id)
                     except ReconfigurationRequired:
                         # Updating protected rclone settings still requires UAC.
                         run_admin("install", profile.id)

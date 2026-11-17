@@ -299,9 +299,9 @@ class MainWindow(QMainWindow):
         self.bucket = QLineEdit()
         self.bucket.setPlaceholderText(tr("Пусто — показать все доступные бакеты"))
         self.bucket.setToolTip(tr(
-            "Необязательно. Без имени бакета монтируется корень S3: "
-            "в Проводнике отображаются доступные бакеты как папки. "
-            "Ключи должны разрешать ListBuckets."
+            "Необязательно. Укажите бакет или путь bucket/folder. "
+            "Начальные и конечные / допускаются. Пустое поле монтирует "
+            "корень S3; ключи должны разрешать ListBuckets."
         ))
         self.access = QLineEdit()
         self.access.setEchoMode(QLineEdit.EchoMode.Password)
@@ -314,7 +314,7 @@ class MainWindow(QMainWindow):
         self.path_style.setChecked(True)
         self.region = QLineEdit("us-east-1")
         self.field_labels = (
-            ("Название:", self.name), ("Endpoint:", self.endpoint), ("Бакет (необязательно):", self.bucket),
+            ("Название:", self.name), ("Endpoint:", self.endpoint), ("Бакет / путь (необязательно):", self.bucket),
             ("Access Key:", self.access), ("Secret Key:", self.secret),
             ("Буква диска:", self.drive), ("Регион:", self.region),
         )
@@ -438,9 +438,9 @@ class MainWindow(QMainWindow):
                 field_label.setText(tr(label))
         self.bucket.setPlaceholderText(tr("Пусто — показать все доступные бакеты"))
         self.bucket.setToolTip(tr(
-            "Необязательно. Без имени бакета монтируется корень S3: "
-            "в Проводнике отображаются доступные бакеты как папки. "
-            "Ключи должны разрешать ListBuckets."
+            "Необязательно. Укажите бакет или путь bucket/folder. "
+            "Начальные и конечные / допускаются. Пустое поле монтирует "
+            "корень S3; ключи должны разрешать ListBuckets."
         ))
         self.path_style.setText(tr("Path-Style (для QNAP / MinIO)"))
         self.shortcut_checkbox.setText(tr("Создать ярлык на рабочем столе"))
@@ -935,7 +935,13 @@ class MainWindow(QMainWindow):
                     except (ControlUnavailable, EnrollmentRequired):
                         # One-time migration of services installed before v1.5.5.
                         run_admin("setup-control", profile.id)
-                        send_control("start", profile)
+                        try:
+                            send_control("start", profile)
+                        except ReconfigurationRequired:
+                            # Legacy enrollment does not attest the installed
+                            # bucket/path; reinstall once rather than mounting
+                            # a potentially different directory silently.
+                            run_admin("install", profile.id)
                     except ReconfigurationRequired:
                         # Updating protected rclone settings still requires UAC.
                         run_admin("install", profile.id)

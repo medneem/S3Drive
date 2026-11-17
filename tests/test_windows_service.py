@@ -110,6 +110,16 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("--dir-cache-time 0s", command)
         self.assertNotIn("s3drive_mount:my-backup", command)
 
+    def test_service_mounts_normalized_bucket_prefix(self):
+        profile = sample()
+        profile.bucket = "/users/medneem/"
+        command = service_command(
+            profile, Path("C:/rclone.exe"), Path("C:/rclone.conf"),
+            Path("C:/cache"), Path("C:/log"), Path("C:/auth"), 33333,
+        )
+        self.assertIn("mount s3drive_mount:users/medneem S:", command)
+        self.assertNotIn("s3drive_mount:/users/medneem/", command)
+
     def test_service_deletes_s3_directory_markers(self):
         for bucket in ("my-backup", ""):
             with self.subTest(bucket=bucket):

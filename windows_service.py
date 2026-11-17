@@ -200,7 +200,7 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
                     log: Path, htpasswd: Path, port: int) -> str:
     validate_service_profile(profile)
     return windows_command_line([
-        str(rclone), "mount", "s3drive_mount:" + profile.bucket,
+        str(rclone), "mount", "s3drive_mount:" + profile.bucket.strip("/"),
         profile.drive, "--config", str(config), "--vfs-cache-mode", "writes",
         "--vfs-write-back", "0s",
         # Prevent MSI installers from using the S3 account root for temporary

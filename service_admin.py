@@ -43,7 +43,8 @@ def run_action(action: str, profile_id: str, owner_sid: str | None = None) -> No
             if profile is None:
                 raise ValueError("Профиль отсутствует в config.json.")
             install_and_start(profile, config_path().parent / "rclone.exe")
-            enroll_profile(profile_id, owner_sid, drive=profile.drive)
+            enroll_profile(profile_id, owner_sid, drive=profile.drive,
+                           mount_source=profile.bucket.strip("/"))
         else:
             if service_status(profile_id) is None:
                 raise RuntimeError("Служба ещё не установлена.")

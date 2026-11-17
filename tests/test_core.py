@@ -63,6 +63,42 @@ class ProfileTests(unittest.TestCase):
             "s3drive_mount:my-backup",
         )
 
+    def test_bucket_prefix_mounts_only_selected_folder(self):
+        for bucket_path in ("/users/medneem/", "users/medneem/", "users/medneem"):
+            with self.subTest(bucket_path=bucket_path):
+                p = sample(bucket=bucket_path)
+                self.assertEqual(
+                    mount_command(p, "rclone.exe", Path("cache"), 12543)[2],
+                    "s3drive_mount:users/medneem",
+                )
+
+    def test_nested_prefix_with_unicode_and_spaces_is_supported(self):
+        p = sample(bucket="/users/Мои файлы/2026/")
+        self.assertEqual(
+            mount_command(p, "rclone.exe", Path("cache"), 12543)[2],
+            "s3drive_mount:users/Мои файлы/2026",
+        )
+
+    def test_bucket_prefix_survives_config_round_trip(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = self.make_store(Path(td) / "config.json")
+            original = sample(bucket="/users/medneem/")
+            store.save([original])
+            loaded = store.load()
+            self.assertEqual(loaded[0].bucket, "/users/medneem/")
+            self.assertEqual(
+                mount_command(loaded[0], "rclone.exe", Path("cache"), 12543)[2],
+                "s3drive_mount:users/medneem",
+            )
+
+    def test_invalid_bucket_prefixes_are_rejected(self):
+        for bad in ("/", "//", "users//medneem", "users/../secret",
+                    "users/./secret", "users\\\\medneem", "users/folder\\nother",
+                    "users/folder:other"):
+            with self.subTest(path=bad):
+                with self.assertRaises(ValueError):
+                    sample(bucket=bad)
+
     def test_root_profile_survives_config_round_trip(self):
         with tempfile.TemporaryDirectory() as td:
             store = ProfileStore(

@@ -25,7 +25,7 @@ REMOTE = "s3drive_mount"
 def remote_environment(profile: Profile) -> dict[str, str]:
     profile.validate()
     prefix = f"RCLONE_CONFIG_{REMOTE.upper()}_"
-    return {
+    options = {
         prefix + "TYPE": "s3",
         prefix + "PROVIDER": "Other",
         prefix + "ENV_AUTH": "false",
@@ -35,6 +35,12 @@ def remote_environment(profile: Profile) -> dict[str, str]:
         prefix + "REGION": profile.region,
         prefix + "FORCE_PATH_STYLE": str(profile.path_style).lower(),
     }
+    # Named buckets already exist. A restricted S3 key can List/Put objects
+    # but return 403 on rclone's implicit CreateBucket check.
+    # Keep root mounts unchanged: they may intentionally create new buckets.
+    if profile.bucket:
+        options[prefix + "NO_CHECK_BUCKET"] = "true"
+    return options
 
 
 def mount_command(profile: Profile, executable: str, cache_dir: Path, port: int) -> list[str]:

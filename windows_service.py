@@ -48,6 +48,32 @@ def service_status(profile_id: str) -> int | None:
         raise
 
 
+def service_command_requires_update(command: str) -> bool:
+    """Old installations still carry INFO/stats flags in SCM BinPath."""
+    import re
+    return (not re.search(r'--log-level(?:=|\\s+)ERROR(?:\\s|$)', command)
+            or re.search(r'--stats(?:=|\\s)', command) is not None
+            or '--stats-log-level' in command)
+
+
+def service_logging_needs_update(profile_id: str) -> bool:
+    """Inspect installed SCM command without stopping or modifying the service."""
+    import win32service
+
+    scm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_CONNECT)
+    try:
+        service = win32service.OpenService(
+            scm, service_name(profile_id), win32service.SERVICE_QUERY_CONFIG
+        )
+        try:
+            command = win32service.QueryServiceConfig(service)[3]
+        finally:
+            win32service.CloseServiceHandle(service)
+    finally:
+        win32service.CloseServiceHandle(scm)
+    return service_command_requires_update(command)
+
+
 def service_dir(profile_id: str) -> Path:
     if os.name != "nt":
         raise OSError("Службы поддерживаются только в Windows.")

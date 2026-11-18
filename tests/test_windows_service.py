@@ -55,7 +55,9 @@ class ServiceTests(unittest.TestCase):
             45999,
         )
         self.assertIn("--use-json-log", cmd)
-        self.assertIn("--stats 2s", cmd)
+        self.assertIn("--log-level ERROR", cmd)
+        self.assertNotIn("--stats 2s", cmd)
+        self.assertNotIn("--stats-log-level", cmd)
         self.assertIn("--rc-htpasswd", cmd)
         self.assertNotIn("--rc-no-auth", cmd)
         self.assertNotIn(p.secret_key, cmd)

@@ -2,5 +2,6 @@
   "feat: добавить открытие журналов и отключить повторные уведомления об ошибках": "feat: open rclone logs from transfer-error warnings and add an Open Logs button; suppress duplicate alerts until new errors",
   "fix: разрешить английские описания релизов для русских коммитов": "fix: generate English release notes for Russian commit subjects using reviewed translations",
   "feat: перенести обслуживание кэша и журналов в настройки S3Drive": "feat: move cache and log maintenance into Settings, display per-profile and total storage usage, and hide the empty error status bar",
-  "fix: разрешить очистку логов работающих подключений и показать пути журналов": "fix: allow clearing logs without disconnecting active mounts, and show Windows service log locations in Settings"
+  "fix: разрешить очистку логов работающих подключений и показать пути журналов": "fix: allow clearing logs without disconnecting active mounts, and show Windows service log locations in Settings",
+  "fix: сократить журналирование и безопасно удалять подключения со всеми данными": "fix: reduce rclone logs to errors only, remove automatic error notifications, allow live log cleanup, and safely delete connection data"
 }

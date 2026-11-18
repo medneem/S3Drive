@@ -367,6 +367,31 @@ class ServiceTests(unittest.TestCase):
                 spawn.assert_not_called()
         self.assertEqual(native.CloseServiceHandle.call_count, 10)
 
+    def test_native_scm_stop_needs_only_service_stop_access(self):
+        """Requesting SERVICE_ALL_ACCESS can deny an otherwise permitted stop."""
+        import sys
+        from unittest.mock import Mock
+        from windows_service import _sc
+
+        native = Mock()
+        native.SC_MANAGER_CONNECT = 1
+        native.SERVICE_STOP = 0x20
+        native.SERVICE_ALL_ACCESS = 0xF01FF
+        native.SERVICE_CONTROL_STOP = 1
+        native.OpenSCManager.return_value = "scm"
+
+        def allowed_for_stop_only(scm, name, access):
+            if access != native.SERVICE_STOP:
+                raise PermissionError(5, "Access denied to excessive service rights")
+            return "service"
+
+        native.OpenService.side_effect = allowed_for_stop_only
+        name = service_name(sample().id)
+        with patch.dict(sys.modules, {"win32service": native}):
+            _sc("stop", name)
+        native.OpenService.assert_called_once_with("scm", name, native.SERVICE_STOP)
+        native.ControlService.assert_called_once_with("service", 1)
+
     def test_native_scm_rejects_unknown_operations_without_side_effects(self):
         from windows_service import _sc
         with self.assertRaises(ValueError):

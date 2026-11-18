@@ -414,6 +414,36 @@ class WindowsS3DeletionTests(unittest.TestCase):
         self.assertIn("medneem/sada.grc", self.remaining("medneem/"))
         self.assertIn("medneem/Benny Benassi - Hypnotica/", self.remaining("medneem/"))
 
+    def test_087_windows_receives_directory_delete_notification(self):
+        """Probe WinFsp -> Win32 notifications, independent of Explorer's UI.
+
+        If Windows cannot observe this event, shortening the S3 directory
+        cache timeout will not make the Explorer window refresh automatically.
+        """
+        import win32con
+        import win32event
+        import win32file
+
+        self.seed("notify-me/child.txt", "keep/unchanged.txt")
+        with self.mounted(bucket=self.bucket) as root:
+            target = root / "notify-me"
+            self.assertTrue(target.is_dir())
+            handle = win32file.FindFirstChangeNotification(
+                str(root), False, win32con.FILE_NOTIFY_CHANGE_DIR_NAME,
+            )
+            try:
+                shutil.rmtree(target)
+                observed = win32event.WaitForSingleObject(handle, 5000)
+            finally:
+                win32file.FindCloseChangeNotification(handle)
+            self.assertEqual(
+                observed, win32event.WAIT_OBJECT_0,
+                "A successful directory deletion on the WinFsp mount did not "
+                "produce a Win32 directory-change notification within 5s",
+            )
+            self.assertFalse(target.exists())
+        self.assertEqual(self.remaining("notify-me/"), [])
+
     def test_09_real_windows_service_stops_via_authenticated_broker(self):
         """Real SCM + WinFsp rclone + VFS safety check + authenticated named pipe.
 

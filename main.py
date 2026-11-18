@@ -310,12 +310,12 @@ class MainWindow(QMainWindow):
         self.drive = QComboBox()
         self.drive.addItems([f"{chr(n)}:" for n in range(ord("D"), ord("Z") + 1)])
         self.drive.setCurrentText("S:")
-        self.path_style = QCheckBox(tr("Path-Style (для QNAP / MinIO)"))
+        self.path_style = QCheckBox(tr("Path-Style"))
         self.path_style.setChecked(True)
         self.region = QLineEdit("us-east-1")
         self.field_labels = (
             ("Название:", self.name), ("Endpoint:", self.endpoint), ("Бакет / путь (необязательно):", self.bucket),
-            ("Access Key:", self.access), ("Secret Key:", self.secret),
+            ("Access Key / Login:", self.access), ("Access Key / Password:", self.secret),
             ("Буква диска:", self.drive), ("Регион:", self.region),
         )
         for label, widget in self.field_labels:
@@ -442,7 +442,7 @@ class MainWindow(QMainWindow):
             "Начальные и конечные / допускаются. Пустое поле монтирует "
             "корень S3; ключи должны разрешать ListBuckets."
         ))
-        self.path_style.setText(tr("Path-Style (для QNAP / MinIO)"))
+        self.path_style.setText(tr("Path-Style"))
         self.shortcut_checkbox.setText(tr("Создать ярлык на рабочем столе"))
         self.open_checkbox.setText(tr("Открыть диск после подключения"))
         self.background_checkbox.setText(tr("Оставлять диск подключённым после закрытия программы"))

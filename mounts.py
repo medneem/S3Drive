@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-from profiles import Profile, app_data_dir
+from profiles import Profile, s3_mount_root, app_data_dir
 from background import BackgroundRecord, BackgroundRegistry
 from cache_ops import ensure_cache_idle, ensure_uploads_idle, erase_cache_directory
 from network_drive import network_volume_name, native_network_volume_prefix
@@ -42,7 +42,7 @@ def mount_command(profile: Profile, executable: str, cache_dir: Path, port: int)
     if not 1 <= port <= 65535:
         raise ValueError("Некорректный порт управления.")
     return [
-        executable, "mount", f"{REMOTE}:{profile.bucket.strip('/')}", profile.drive,
+        executable, "mount", f"{REMOTE}:{s3_mount_root(profile.bucket)}", profile.drive,
         "--vfs-cache-mode", "writes",
         # Start upload as soon as the local writer closes a file. This reduces
         # the race window with deletion by another S3 client, but cannot

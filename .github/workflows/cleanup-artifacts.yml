@@ -1,0 +1,48 @@
+name: Cleanup old build artifacts
+
+on:
+  push:
+    paths:
+      - .github/workflows/cleanup-artifacts.yml
+  workflow_dispatch:
+  schedule:
+    - cron: '30 2 * * *'
+
+permissions:
+  actions: write
+
+concurrency:
+  group: cleanup-s3drive-artifacts
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Keep two newest S3Drive build artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Remove old Windows build archives
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cutoff=$(date -u -d '2 hours ago' +'%Y-%m-%dT%H:%M:%SZ')
+          seen=0
+          deleted=0
+          while IFS=$'\t' read -r id created name; do
+            [[ "$name" == S3Drive-windows-x64-* ]] || continue
+            seen=$((seen + 1))
+            if (( seen <= 2 )) || [[ "$created" > "$cutoff" ]]; then
+              echo "KEEP $id $name"
+              continue
+            fi
+            echo "DELETE $id $name"
+            gh api --method DELETE "/repos/$GITHUB_REPOSITORY/actions/artifacts/$id" --silent
+            deleted=$((deleted + 1))
+          done < <(
+            gh api --paginate "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.expired == false) | [.id, .created_at, .name] | @tsv' \
+              | sort -t $'\t' -k2,2r
+          )
+          echo "Deleted $deleted old S3Drive artifacts"

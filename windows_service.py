@@ -222,9 +222,9 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
         # Remove S3 "folder/" marker objects when Explorer removes a directory.
         # Without this flag S3 backend Rmdir leaves the marker behind.
         "--s3-directory-markers",
-        "--cache-dir", str(cache), "--log-file", str(log), "--log-level", "INFO",
-        # JSONL содержит machine-readable core/stats. Без доступа к RC-паролю.
-        "--use-json-log", "--stats", "2s", "--stats-log-level", "INFO",
+        # Only diagnostic errors, no periodic INFO/statistics output.
+        "--cache-dir", str(cache), "--log-file", str(log), "--log-level", "ERROR",
+        "--use-json-log",
         # rclone v1.75.2 SetVolumeName uses len(vol) > 32, i.e. UTF-8 BYTES,
         # and slices the name before WinFsp receives it. Passing the
         # native FUSE option bypasses that lossy rclone function.

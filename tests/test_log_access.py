@@ -19,6 +19,14 @@ class TransferErrorNoticeTests(unittest.TestCase):
         self.assertTrue(notices.observe("profile", 3))
         self.assertTrue(notices.pending("profile"))
 
+    def test_decrease_rebases_without_alert_and_next_increase_alerts(self):
+        notices = TransferErrorNotices()
+        self.assertTrue(notices.observe("profile", 5))
+        notices.acknowledge("profile")
+        self.assertFalse(notices.observe("profile", 1))
+        self.assertFalse(notices.pending("profile"))
+        self.assertTrue(notices.observe("profile", 2))
+
     def test_clear_error_resets_episode_and_isolated_profiles(self):
         notices = TransferErrorNotices()
         self.assertTrue(notices.observe("one", 1))

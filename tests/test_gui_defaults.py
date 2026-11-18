@@ -89,6 +89,48 @@ class NewProfileDefaultsTests(unittest.TestCase):
         pool.return_value.start.assert_called_once_with(task.return_value)
         self.assertTrue(ui.monitor_pending)
 
+    def test_stop_repairs_old_broker_once_then_retries_safe_stop(self):
+        """Updating the GUI alone does not update an already installed broker."""
+        from unittest.mock import patch
+        import main
+
+        profile = SimpleNamespace(id="test-service-id", drive="U:", service_mode=True)
+        window = SimpleNamespace(
+            selected_profile=Mock(return_value=profile),
+            mounts=Mock(), pending_mounts={}, status=Mock(), update_status=Mock(),
+        )
+        with patch("main.service_status", return_value=main.SERVICE_RUNNING), \
+             patch("main.send_control", side_effect=[
+                 RuntimeError("Внутренняя ошибка управления службой."), None
+             ]) as send, \
+             patch("main.run_admin") as admin, \
+             patch("main.notify_explorer"), \
+             patch("main.QMessageBox.warning") as warning:
+            MainWindow.unmount_profile(window)
+        self.assertEqual(send.call_count, 2)
+        admin.assert_called_once_with("repair-control", profile.id)
+        warning.assert_not_called()
+
+    def test_stop_does_not_retry_or_force_shutdown_on_upload_error(self):
+        from unittest.mock import patch
+        import main
+
+        profile = SimpleNamespace(id="test-service-id", drive="U:", service_mode=True)
+        window = SimpleNamespace(
+            selected_profile=Mock(return_value=profile),
+            mounts=Mock(), pending_mounts={}, status=Mock(), update_status=Mock(),
+        )
+        with patch("main.service_status", return_value=main.SERVICE_RUNNING), \
+             patch("main.send_control",
+                   side_effect=RuntimeError("Нельзя остановить службу: файлы в очереди")) as send, \
+             patch("main.run_admin") as admin, \
+             patch("main.QMessageBox.warning") as warning:
+            MainWindow.unmount_profile(window)
+        send.assert_called_once_with("stop", profile)
+        admin.assert_not_called()
+        warning.assert_called_once()
+        self.assertEqual(warning.call_args.args[2], "Нельзя остановить службу: файлы в очереди")
+
     def test_transfer_dialog_has_no_hidden_main_window_parent(self):
         import inspect
         from main import MainWindow

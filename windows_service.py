@@ -571,6 +571,19 @@ def clear_service_cache(profile_id: str) -> bool:
     return erase_cache_directory(base / "cache", parent=base)
 
 
+
+def clear_service_log(profile_id: str) -> bool:
+    """Elevated, targeted cleanup; never remove a log from a running service."""
+    import uuid
+    from maintenance import clear_log_file
+
+    uuid.UUID(profile_id)
+    state = service_status(profile_id)
+    if state not in (None, SERVICE_STOPPED):
+        raise RuntimeError("Остановите службу перед очисткой журналов.")
+    return clear_log_file(service_dir(profile_id) / "rclone.log")
+
+
 def remove_service(profile_id: str) -> None:
     state = service_status(profile_id)
     if state is None:

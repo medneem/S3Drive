@@ -43,7 +43,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          python -m pip install "moto[server]==5.2.2" boto3
+          python -m pip install "moto[server]==5.2.2" boto3 pywin32
           if ($LASTEXITCODE -ne 0) { throw "Moto S3 installation failed" }
 
       - name: Download exact production rclone and WinFsp (SHA256 verified)
@@ -64,6 +64,8 @@ jobs:
             throw "WinFsp installer exit code: $($process.ExitCode)"
           }
 
+      # The integration suite also registers a disposable real Windows
+      # rclone service and stops it through the authenticated control pipe.
       - name: Three real mount + S3 API deletion checks
         shell: pwsh
         env:

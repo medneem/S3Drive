@@ -1453,7 +1453,7 @@ class MainWindow(QMainWindow):
         profile = self.selected_profile()
         if profile is None:
             self.remove_service_button.setEnabled(False)
-                self.unmount_button.setEnabled(False)
+            self.unmount_button.setEnabled(False)
             self.mount_button.setEnabled(True)
             return
         service = service_status(profile.id)

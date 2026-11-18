@@ -97,7 +97,7 @@ python -m pip install -r requirements-admin-build.txt
 python -m unittest discover -s tests -v
 ```
 
-Pushing to `main` **does not create a Git tag or publish a release**. Publication requires explicit owner approval and a manual **Build Windows** workflow run with a `release_version` input (SemVer without `v`). See [GitHub Releases](https://github.com/medneem/S3Drive/releases) for change history and [docs/](docs/) for historical investigations.
+Pushing to `main` **does not create a Git tag or publish a release**. Publication requires explicit owner approval and a manual **Build Windows** workflow run with a `release_version` input (SemVer without `v`). Release notes are generated in English from commits made since the latest **published** stable release, without repeating the GitHub release title. Commit subjects must be in English; the release job stops instead of publishing mixed-language notes. See [GitHub Releases](https://github.com/medneem/S3Drive/releases) for change history and [docs/](docs/) for historical investigations.
 
 ## Antivirus detections
 

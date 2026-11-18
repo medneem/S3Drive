@@ -354,7 +354,11 @@ def _sc(*args: str) -> None:
             )
         else:
             handle = win32service.OpenService(
-                scm, name, win32service.SERVICE_ALL_ACCESS
+                scm, name,
+                # An ordinary stop does not need SERVICE_ALL_ACCESS. Requesting
+                # extra rights can be rejected by protected service DACLs.
+                win32service.SERVICE_STOP if operation == "stop"
+                else win32service.SERVICE_ALL_ACCESS,
             )
         try:
             if operation == "config":

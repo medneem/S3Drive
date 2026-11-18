@@ -168,6 +168,74 @@ class ControlProtocolTests(unittest.TestCase):
         # FILE_CREATE_PIPE_INSTANCE and FILE_APPEND_DATA overlap at bit 0x4.
         self.assertEqual(masks[0] & 0x0004, 0)
 
+    def test_running_broker_reports_win32_stop_failure_instead_of_generic_message(self):
+        """Regression: pywintypes.error from ControlService was hidden by a generic error."""
+        import sys
+        import threading
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from service_control import serve
+
+        class FakeWin32Error(Exception):
+            def __init__(self, code, function, description):
+                super().__init__(code, function, description)
+                self.winerror = code
+                self.funcname = function
+                self.strerror = description
+
+        stop_event = threading.Event()
+        pipe = Mock()
+        native = Mock()
+        native.ReadFile.return_value = (
+            0, json.dumps({"action": "stop", "profile_id": profile().id}).encode("utf-8")
+        )
+        pipe.DisconnectNamedPipe.side_effect = lambda _: stop_event.set()
+        native_error = FakeWin32Error(1052, "ControlService", "Invalid control")
+        with patch.dict(sys.modules, {
+            "pywintypes": SimpleNamespace(error=FakeWin32Error),
+            "win32pipe": pipe, "win32file": native,
+        }), patch("service_control._make_pipe", return_value="pipe"), \
+             patch("service_control._client_sid", return_value="S-1-5-21-100-200-300-1000"), \
+             patch("service_control.handle_request", side_effect=native_error):
+            serve(stop_event)
+
+        reply = json.loads(native.WriteFile.call_args.args[1].decode("utf-8"))
+        self.assertFalse(reply["ok"])
+        self.assertIn("1052", reply["error"])
+        self.assertIn("ControlService", reply["error"])
+        self.assertNotIn("Внутренняя ошибка", reply["error"])
+
+    def test_broker_stop_preserves_pending_upload_error_and_never_bypasses_vfs(self):
+        """A failed VFS safety check must be reported, not retried with forced SCM stop."""
+        import sys
+        import threading
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from service_control import serve
+
+        stop_event = threading.Event()
+        pipe = Mock()
+        native = Mock()
+        native.ReadFile.return_value = (
+            0, json.dumps({"action": "stop", "profile_id": profile().id}).encode("utf-8")
+        )
+        pipe.DisconnectNamedPipe.side_effect = lambda _: stop_event.set()
+        class DummyWin32Error(Exception):
+            pass
+        with patch.dict(sys.modules, {
+            "pywintypes": SimpleNamespace(error=DummyWin32Error),
+            "win32pipe": pipe, "win32file": native,
+        }), patch("service_control._make_pipe", return_value="pipe"), \
+             patch("service_control._client_sid", return_value="S-1-5-21-100-200-300-1000"), \
+             patch("service_control.handle_request",
+                   side_effect=RuntimeError("Нельзя остановить службу: незавершённая загрузка")):
+            serve(stop_event)
+
+        reply = json.loads(native.WriteFile.call_args.args[1].decode("utf-8"))
+        self.assertFalse(reply["ok"])
+        self.assertIn("незавершённая загрузка", reply["error"])
+        self.assertNotIn("Внутренняя ошибка", reply["error"])
+
     def test_access_denied_at_client_pipe_open_requires_broker_repair(self):
         import pywintypes
         from unittest.mock import Mock

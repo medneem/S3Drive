@@ -1231,22 +1231,26 @@ class MainWindow(QMainWindow):
                 )
         self.update_status()
 
-    def clear_cache_profile(self):
-        profile = self.selected_profile()
+    def clear_cache_profile(self, *, profile: Profile | None = None,
+                            parent: QWidget | None = None) -> bool:
+        """Preserve the existing safe cache-clear transaction for one profile."""
         if profile is None:
-            return
+            profile = self.selected_profile()
+        if profile is None:
+            return False
+        parent = parent or self
         svc_state = service_status(profile.id)
         active = svc_state == SERVICE_RUNNING or self.mounts.is_mounted(profile.id)
         if not active:
             QMessageBox.warning(
-                self, "Очистка кэша",
+                parent, "Очистка кэша",
                 "Для безопасной очистки диск должен быть подключён. "
                 "После аварийного завершения в кэше могут остаться неотправленные "
                 "файлы, поэтому удалять его без проверки нельзя.",
             )
-            return
+            return False
         answer = QMessageBox.question(
-            self, "Очистить кэш",
+            parent, "Очистить кэш",
             tr("Проверить загрузки, отключить диск {drive} "
             "и удалить локальный кэш?\n\n"
             "Это отключит диск до следующего ручного подключения. "
@@ -1256,7 +1260,7 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
-            return
+            return False
         try:
             if svc_state is not None:
                 run_admin("clear-cache", profile.id)
@@ -1266,13 +1270,56 @@ class MainWindow(QMainWindow):
             self.uploads_seen.discard(profile.id)
             self.hide_transfer_popup()
             QMessageBox.information(
-                self, "Кэш очищен",
+                parent, "Кэш очищен",
                 tr("Локальный кэш {name} очищен. Диск отключён. "
                 "Подключите его снова при необходимости.", name=profile.name),
             )
         except Exception as exc:
-            QMessageBox.warning(self, "Кэш не очищен", str(exc))
+            QMessageBox.warning(parent, "Кэш не очищен", str(exc))
+            self.update_status()
+            return False
         self.update_status()
+        return True
+
+    def clear_logs_profile(self, *, profile: Profile | None = None,
+                           parent: QWidget | None = None) -> bool:
+        """Clear only the selected mount's stopped log, never active handles."""
+        if profile is None:
+            profile = self.selected_profile()
+        if profile is None:
+            return False
+        parent = parent or self
+        state = service_status(profile.id)
+        if state == SERVICE_RUNNING or self.mounts.is_mounted(profile.id):
+            QMessageBox.warning(parent, "Очистка журналов",
+                tr("Отключите выбранное подключение перед очисткой его журналов."))
+            return False
+        if state not in (None, SERVICE_STOPPED):
+            QMessageBox.warning(parent, "Очистка журналов",
+                tr("Дождитесь остановки службы перед очисткой журналов."))
+            return False
+        answer = QMessageBox.question(
+            parent, "Очистить логи",
+            tr("Удалить журналы подключения {name}?\n"
+               "Журналы других подключений сохранятся.", name=profile.name),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return False
+        try:
+            if profile.service_mode:
+                run_admin("clear-logs", profile.id)
+            else:
+                clear_user_log(profile.id)
+        except Exception as exc:
+            QMessageBox.warning(parent, "Журналы не очищены", str(exc))
+            return False
+        QMessageBox.information(
+            parent, "Журналы очищены",
+            tr("Журналы подключения {name} удалены, если существовали.", name=profile.name),
+        )
+        return True
 
     def hide_transfer_popup(self):
         if self.transfer_popup is not None:
@@ -1347,20 +1394,6 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             QMessageBox.warning(self, "Не удалось открыть журнал", str(exc))
             return False
-
-    def open_logs(self) -> None:
-        profile = self.selected_profile()
-        if profile is None:
-            try:
-                directory = app_data_dir() / "logs"
-                directory.mkdir(parents=True, exist_ok=True)
-                os.startfile(str(directory))
-            except OSError as exc:
-                QMessageBox.warning(self, "Не удалось открыть журнал", str(exc))
-            return
-        if self._open_profile_logs(profile) and self.transfer_error_profile_id == profile.id:
-            self.error_notices.acknowledge(profile.id)
-            self._hide_transfer_error(profile.id)
 
     def open_transfer_error_logs(self, _href: str = "") -> None:
         profile_id = self.transfer_error_profile_id

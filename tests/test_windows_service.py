@@ -230,6 +230,47 @@ class ServiceTests(unittest.TestCase):
             self.assertIn(f"rclone-{sha[:16]}.exe", command)
             self.assertNotIn("rclone.exe mount", command)
 
+    def test_windows_1053_start_failure_reports_log_location_and_preserves_cache(self):
+        import hashlib
+        from windows_service import install_and_start
+        profile = sample()
+        payload = b"trusted rclone integration binary"
+        sha = hashlib.sha256(payload).hexdigest()
+
+        class FakeServiceError(Exception):
+            winerror = 1053
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "rclone.exe"
+            source.write_bytes(payload)
+            with patch.dict("os.environ", {"PROGRAMDATA": str(root)}), \
+                 patch("windows_service.service_status",
+                       side_effect=[None, SERVICE_STOPPED]), \
+                 patch("windows_service.service_dir",
+                       side_effect=lambda ident: root / "services" / ident), \
+                 patch("windows_service.check_drive_free"), \
+                 patch("windows_service.verify_bundled_rclone", return_value=sha), \
+                 patch("windows_service.protect_directory",
+                       side_effect=lambda path: path.mkdir(parents=True, exist_ok=True)), \
+                 patch("windows_service.protect_file"), \
+                 patch("windows_service.protect_monitor_log"), \
+                 patch("windows_service.install_explorer_label"), \
+                 patch("windows_service.restore_explorer_label") as restore, \
+                 patch("windows_service._choose_rc_port", return_value=45532), \
+                 patch("windows_service._sc",
+                       side_effect=lambda *args: (
+                           (_ for _ in ()).throw(FakeServiceError("1053"))
+                           if args[0] == "start" else None
+                       )) as sc:
+                with self.assertRaisesRegex(RuntimeError, "1053") as caught:
+                    install_and_start(profile, source)
+            self.assertIn("rclone.log", str(caught.exception))
+            self.assertTrue((root / "services" / profile.id / "cache").exists())
+            self.assertEqual([call.args[0] for call in sc.call_args_list],
+                             ["create", "start"])
+            restore.assert_called_once_with(profile.id)
+
     def test_drive_label_registration_uses_exact_unicode_name(self):
         from windows_service import drive_label_registry_path
         self.assertTrue(drive_label_registry_path("S:").endswith(r"DriveIcons\S\DefaultLabel"))
@@ -322,6 +363,32 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(acl.GetAceCount(), 2)
             for i in range(2):
                 self.assertEqual(acl.GetAce(i)[1], win32file.FILE_ALL_ACCESS)
+
+    def test_unreadable_winfsp_letter_is_still_occupied(self):
+        """Path.exists() can be false for a mounted but broken WinFsp drive."""
+        import ctypes
+        from windows_service import check_drive_free
+        with patch("pathlib.Path.exists", return_value=False), \
+             patch.object(ctypes.windll.kernel32, "GetLogicalDrives",
+                          return_value=1 << (ord("M") - ord("A"))):
+            with self.assertRaisesRegex(RuntimeError, "M:"):
+                check_drive_free("M:")
+
+    def test_new_drive_not_blocked_when_absent_from_windows_drive_mask(self):
+        import ctypes
+        from windows_service import check_drive_free
+        with patch("pathlib.Path.exists", return_value=False), \
+             patch.object(ctypes.windll.kernel32, "GetLogicalDrives",
+                          return_value=1 << (ord("C") - ord("A"))):
+            check_drive_free("M:")
+
+    def test_unavailable_windows_drive_mask_blocks_unsafe_start(self):
+        import ctypes
+        from windows_service import check_drive_free
+        with patch("pathlib.Path.exists", return_value=False), \
+             patch.object(ctypes.windll.kernel32, "GetLogicalDrives", return_value=0):
+            with self.assertRaisesRegex(OSError, "список дисков"):
+                check_drive_free("M:")
 
     def test_native_scm_create_start_stop_config_delete_without_sc_subprocess(self):
         import sys

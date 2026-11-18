@@ -310,6 +310,21 @@ def check_drive_free(drive: str) -> None:
     # Validate again in the elevated process. Never replace a real disk.
     if not re.fullmatch(r"[A-Z]:", drive):
         raise ValueError("Некорректная буква диска.")
+    if os.name == "nt":
+        import ctypes
+
+        # Path.exists() returns False for an INACCESSIBLE WinFsp mount too.
+        # Windows still owns its drive letter, even if listing M:\\ fails
+        # with ERROR_IO_DEVICE. Fail closed instead of mounting over it.
+        mask = ctypes.windll.kernel32.GetLogicalDrives()
+        if not mask:
+            raise OSError("Не удалось получить список дисков Windows.")
+        if mask & (1 << (ord(drive[0]) - ord("A"))):
+            raise RuntimeError(
+                f"Буква {drive} уже занята в Windows, возможно недоступным "
+                "подключением WinFsp. Не запускайте поверх неё вторую службу; "
+                "проверьте состояние rclone и ожидающие передачи."
+            )
     if Path(drive + "\\").exists():
         raise RuntimeError(f"Буква {drive} занята. Отключите предыдущий диск.")
 
@@ -487,9 +502,25 @@ def install_and_start(profile, source_rclone: Path) -> None:
         else:
             _sc("config", name, "binPath=", cmd, "start=", "auto")
         _sc("start", name)
-    except Exception:
-        # No phantom Explorer label if SCM rejected the new mount.
-        restore_explorer_label(profile.id)
+    except Exception as exc:
+        # A 1053 timeout is not proof that the process has exited. In
+        # particular, WinFsp may leave a letter mounted but unreadable.
+        # Never stop/kill this process or delete VFS data in error recovery.
+        try:
+            after_failure = service_status(profile.id)
+        except Exception:
+            after_failure = None
+        if after_failure != SERVICE_RUNNING:
+            restore_explorer_label(profile.id)
+        if getattr(exc, "winerror", None) == 1053:
+            raise RuntimeError(
+                "Windows не дождалась ответа службы (StartService, ошибка 1053). "
+                f"Состояние SCM после ошибки: {after_failure}. "
+                f"Проверьте журнал rclone (если создан): {log}. "
+                "Проверьте доступность Endpoint, права бакета и отсутствие "
+                "зависшего диска WinFsp. Не удаляйте VFS-кэш и не запускайте "
+                "принудительную остановку: сначала проверьте незавершённые передачи."
+            ) from exc
         raise
 
 

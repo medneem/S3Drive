@@ -87,6 +87,18 @@ class Profile:
             raise ValueError("Выберите службу Windows или пользовательский фон, но не оба варианта.")
 
 
+def s3_mount_root(bucket: str) -> str:
+    """Canonical rclone root. A nested S3 prefix MUST end with '/'.
+
+    Without the trailing slash rclone may HEAD-test the prefix as a file.
+    Restricted S3 keys can return 403 for that test and rclone then fails
+    with "is a file not a directory", even though the folder exists.
+    A bucket-only root and account root do not require the slash.
+    """
+    path = bucket.strip("/")
+    return path + "/" if "/" in path else path
+
+
 def config_path() -> Path:
     """Portable config beside S3Drive.exe; project folder in development."""
     if getattr(sys, "frozen", False):

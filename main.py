@@ -41,7 +41,7 @@ from transfer_monitor import read_user_snapshot, read_service_snapshot, Transfer
 from legacy_startup import remove_legacy_tray_autostart
 from localization import tr, set_language, get_language, read_language
 from log_access import TransferErrorNotices, profile_log_path
-from maintenance import StorageUsage, storage_usage, format_size, format_total, clear_user_log
+from maintenance import StorageUsage, storage_usage, format_size, format_total, clear_user_log, service_logs_root
 
 
 class QMessageBox(QtMessageBox):
@@ -525,6 +525,12 @@ class MainWindow(QMainWindow):
                 target = app_data_dir()
                 target.mkdir(parents=True, exist_ok=True)
                 os.startfile(str(target))
+            elif destination == "services":
+                os.startfile(str(service_logs_root()))
+            elif destination == "selected-log":
+                profile = self.selected_profile()
+                if profile is not None:
+                    os.startfile(str(profile_log_path(profile)))
         except OSError as exc:
             QMessageBox.warning(self, "Не удалось открыть каталог", str(exc))
 
@@ -561,13 +567,22 @@ class MainWindow(QMainWindow):
         paths_form = QFormLayout(paths_group)
         config_link = QLabel(f'<a href="config">{escape(str(config_path()))}</a>')
         data_link = QLabel(f'<a href="data">{escape(str(app_data_dir()))}</a>')
-        for link in (config_link, data_link):
+        services_link = QLabel(
+            f'<a href="services">{escape(str(service_logs_root()))}</a>'
+        )
+        selected_log_link = QLabel(
+            f'<a href="selected-log">{escape(str(profile_log_path(profile)))}</a>'
+            if profile is not None else tr("Подключение не выбрано")
+        )
+        for link in (config_link, data_link, services_link, selected_log_link):
             link.setTextFormat(Qt.TextFormat.RichText)
             link.setWordWrap(True)
             link.setOpenExternalLinks(False)
             link.linkActivated.connect(self.open_settings_location)
         paths_form.addRow(tr("Файл конфигурации:"), config_link)
         paths_form.addRow(tr("Каталог кэша и журналов:"), data_link)
+        paths_form.addRow(tr("Каталог журналов Windows-служб:"), services_link)
+        paths_form.addRow(tr("Журнал выбранного подключения:"), selected_log_link)
         layout.addWidget(paths_group)
 
         maintenance_group = QGroupBox(tr("Обслуживание"))
@@ -594,7 +609,8 @@ class MainWindow(QMainWindow):
             "и удаляет кэш выбранного подключения."
         ))
         clear_logs.setToolTip(tr(
-            "Для очистки журналов выбранное подключение должно быть остановлено."
+            "Очищает журнал выбранного подключения без остановки диска. "
+            "Если журнал заблокирован Windows, операция отменяется."
         ))
         row.addWidget(clear_cache)
         row.addWidget(clear_logs)
@@ -611,7 +627,7 @@ class MainWindow(QMainWindow):
             service = service_status(profile.id)
             active = service == SERVICE_RUNNING or self.mounts.is_mounted(profile.id)
             clear_cache.setEnabled(active)
-            clear_logs.setEnabled(not active and service in (None, SERVICE_STOPPED))
+            clear_logs.setEnabled(service in (None, SERVICE_STOPPED, SERVICE_RUNNING))
 
         def display_usage(result: object) -> None:
             dialog._size_scanning = False
@@ -1295,18 +1311,14 @@ class MainWindow(QMainWindow):
 
     def clear_logs_profile(self, *, profile: Profile | None = None,
                            parent: QWidget | None = None) -> bool:
-        """Clear only the selected mount's stopped log, never active handles."""
+        """Clear only the selected log, keeping running rclone alive."""
         if profile is None:
             profile = self.selected_profile()
         if profile is None:
             return False
         parent = parent or self
         state = service_status(profile.id)
-        if state == SERVICE_RUNNING or self.mounts.is_mounted(profile.id):
-            QMessageBox.warning(parent, "Очистка журналов",
-                tr("Отключите выбранное подключение перед очисткой его журналов."))
-            return False
-        if state not in (None, SERVICE_STOPPED):
+        if state not in (None, SERVICE_STOPPED, SERVICE_RUNNING):
             QMessageBox.warning(parent, "Очистка журналов",
                 tr("Дождитесь остановки службы перед очисткой журналов."))
             return False
@@ -1323,7 +1335,7 @@ class MainWindow(QMainWindow):
             if profile.service_mode:
                 run_admin("clear-logs", profile.id)
             else:
-                clear_user_log(profile.id)
+                clear_user_log(profile.id, running=self.mounts.is_mounted(profile.id))
         except Exception as exc:
             QMessageBox.warning(parent, "Журналы не очищены", str(exc))
             return False

@@ -230,6 +230,47 @@ class ServiceTests(unittest.TestCase):
             self.assertIn(f"rclone-{sha[:16]}.exe", command)
             self.assertNotIn("rclone.exe mount", command)
 
+    def test_windows_1053_start_failure_reports_log_location_and_preserves_cache(self):
+        import hashlib
+        from windows_service import install_and_start
+        profile = sample()
+        payload = b"trusted rclone integration binary"
+        sha = hashlib.sha256(payload).hexdigest()
+
+        class FakeServiceError(Exception):
+            winerror = 1053
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "rclone.exe"
+            source.write_bytes(payload)
+            with patch.dict("os.environ", {"PROGRAMDATA": str(root)}), \
+                 patch("windows_service.service_status",
+                       side_effect=[None, SERVICE_STOPPED]), \
+                 patch("windows_service.service_dir",
+                       side_effect=lambda ident: root / "services" / ident), \
+                 patch("windows_service.check_drive_free"), \
+                 patch("windows_service.verify_bundled_rclone", return_value=sha), \
+                 patch("windows_service.protect_directory",
+                       side_effect=lambda path: path.mkdir(parents=True, exist_ok=True)), \
+                 patch("windows_service.protect_file"), \
+                 patch("windows_service.protect_monitor_log"), \
+                 patch("windows_service.install_explorer_label"), \
+                 patch("windows_service.restore_explorer_label") as restore, \
+                 patch("windows_service._choose_rc_port", return_value=45532), \
+                 patch("windows_service._sc",
+                       side_effect=lambda *args: (
+                           (_ for _ in ()).throw(FakeServiceError("1053"))
+                           if args[0] == "start" else None
+                       )) as sc:
+                with self.assertRaisesRegex(RuntimeError, "1053") as caught:
+                    install_and_start(profile, source)
+            self.assertIn("rclone.log", str(caught.exception))
+            self.assertTrue((root / "services" / profile.id.replace("-", "") / "cache").exists())
+            self.assertEqual([call.args[0] for call in sc.call_args_list],
+                             ["create", "start"])
+            restore.assert_called_once_with(profile.id)
+
     def test_drive_label_registration_uses_exact_unicode_name(self):
         from windows_service import drive_label_registry_path
         self.assertTrue(drive_label_registry_path("S:").endswith(r"DriveIcons\S\DefaultLabel"))

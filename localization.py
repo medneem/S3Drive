@@ -35,7 +35,6 @@ ENGLISH = {
     "Регион:": "Region:",
     "Пусто — показать все доступные бакеты": "Leave empty to show all accessible buckets",
     "Необязательно. Укажите бакет или путь bucket/folder. Начальные и конечные / допускаются. Пустое поле монтирует корень S3; ключи должны разрешать ListBuckets.": "Optional. Enter a bucket or a path such as bucket/folder. Leading and trailing slashes are allowed. Leave empty to mount the S3 account root; credentials must allow ListBuckets.",
-    "Path-Style (для QNAP / MinIO)": "Path-style (for QNAP / MinIO)",
     "Создать ярлык на рабочем столе": "Create desktop shortcut",
     "Открыть диск после подключения": "Open drive after connecting",
     "Оставлять диск подключённым после закрытия программы": "Keep drive connected after closing the app",

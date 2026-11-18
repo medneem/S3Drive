@@ -9,7 +9,7 @@ import uuid
 from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QObject, QRunnable, QThreadPool, Signal
+from PySide6.QtCore import Qt, QTimer, QObject, QRunnable, QThreadPool, Signal, Slot
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
@@ -105,6 +105,17 @@ class _MonitorTask(QRunnable):
 
 class _StorageSignals(QObject):
     finished = Signal(object)
+
+
+class _StorageReceiver(QObject):
+    """Deliver worker results on Qt's GUI thread, never on the worker."""
+    def __init__(self, callback, parent: QObject):
+        super().__init__(parent)
+        self.callback = callback
+
+    @Slot(object)
+    def on_finished(self, report: object) -> None:
+        self.callback(report)
 
 
 class _StorageTask(QRunnable):
@@ -633,7 +644,7 @@ class MainWindow(QMainWindow):
             dialog._size_scanning = True
             task = _StorageTask(self.profiles)
             self._maintenance_task = task
-            task.signals.finished.connect(display_usage)
+            task.signals.finished.connect(receiver.on_finished)
             QThreadPool.globalInstance().start(task)
 
         def clear_chosen_cache() -> None:
@@ -648,6 +659,7 @@ class MainWindow(QMainWindow):
                 refresh_buttons()
                 refresh_sizes()
 
+        receiver = _StorageReceiver(display_usage, dialog)
         clear_cache.clicked.connect(clear_chosen_cache)
         clear_logs.clicked.connect(clear_chosen_logs)
         reload_sizes.clicked.connect(refresh_sizes)

@@ -35,8 +35,11 @@ class TransferErrorNotices:
             self._counts[profile_id] = errors
             self._pending.add(profile_id)
             return True
-        # An rclone restart can reset the count before the next poll. Avoid
-        # treating a lower nonzero value as a new error until a zero is seen.
+        if errors < previous:
+            # Failed VFS files can be removed, or rclone can restart between
+            # polls without a visible zero. Rebase without alerting: the
+            # *next increase* is the next new error.
+            self._counts[profile_id] = errors
         return False
 
     def pending(self, profile_id: str) -> bool:

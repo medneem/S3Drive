@@ -2,11 +2,12 @@
 
 The release workflow supplies the previous tag from GitHub's releases/latest
 endpoint. Never assume that the highest reachable git tag was published.
-Do not publish untranslated commit subjects.
+Use reviewed English translations for any Russian commit subjects.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -14,6 +15,12 @@ from pathlib import Path
 VERSION_PATTERN = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 TYPE_PATTERN = re.compile(r"^([a-z]+)(?:\([^)]+\))?(!)?:\s*(.+)$", re.DOTALL)
 REPO_URL = "https://github.com/medneem/S3Drive"
+# Explicit translations preserve the owner's Russian commit messages while
+# keeping published release descriptions strictly English. Unknown subjects
+# fail closed instead of publishing inaccurate machine-translated claims.
+ENGLISH_SUBJECT_TRANSLATIONS: dict[str, str] = json.loads(
+    Path(__file__).with_name("release_notes_en.json").read_text(encoding="utf-8")
+)
 SECTIONS = (
     "Breaking changes",
     "Features",
@@ -84,12 +91,18 @@ def build_release_notes(new_tag: str, previous_tag: str,
 
     groups: dict[str, list[str]] = {section: [] for section in SECTIONS}
     for sha, subject in commits:
-        if not subject.isascii():
+        translated = (ENGLISH_SUBJECT_TRANSLATIONS.get(subject, subject)
+                      if not subject.isascii() else subject)
+        if not isinstance(translated, str) or not translated.isascii() or not translated.strip():
             raise ValueError(
-                f"Commit {sha[:7]} has a non-ASCII subject; English release "
-                "notes require an English commit summary before publishing."
+                f"Commit {sha[:7]} has a non-ASCII subject without a reviewed "
+                "English translation in scripts/release_notes_en.json."
             )
-        section, description = section_for_subject(subject)
+        section, description = section_for_subject(translated)
+        if section != section_for_subject(subject)[0]:
+            raise ValueError(
+                f"Commit {sha[:7]} translation changes the commit category."
+            )
         groups[section].append(
             f"- {description} ([{sha[:7]}]({REPO_URL}/commit/{sha}))"
         )

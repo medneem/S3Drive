@@ -347,8 +347,17 @@ jobs:
             echo "::error::Git tag $tag already exists — refusing to reuse it"
             exit 1
           fi
+          # Use the latest *published* stable release, not the largest Git tag.
+          previous_tag="$(gh api "repos/$GH_REPO/releases/latest" --jq '.tag_name')"
+          if [[ ! "$previous_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Unexpected latest published release tag: $previous_tag"
+            exit 1
+          fi
           notes="release/RELEASE_NOTES.md"
-          python scripts/release_notes.py --version "$RELEASE_VERSION" --output "$notes"
+          python scripts/release_notes.py \
+            --version "$RELEASE_VERSION" \
+            --previous-tag "$previous_tag" \
+            --output "$notes"
           manifest="release/S3Drive-update.json"
           python scripts/release_manifest.py --version "$RELEASE_VERSION" --archive "$zip" --output "$manifest"
           gh release create "$tag" "$zip" "$manifest" \

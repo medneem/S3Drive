@@ -96,7 +96,7 @@ python -m pip install -r requirements-admin-build.txt
 python -m unittest discover -s tests -v
 ```
 
-Обычный push в `main` **не создаёт тег или релиз**. Публикация выполняется только по явному решению владельца через ручной запуск workflow `Build Windows` с параметром `release_version` (SemVer без `v`). История выпусков — в [GitHub Releases](https://github.com/medneem/S3Drive/releases), история расследований — в [docs/](docs/).
+Обычный push в `main` **не создаёт тег или релиз**. Публикация выполняется только по явному решению владельца через ручной запуск workflow `Build Windows` с параметром `release_version` (SemVer без `v`). Описание релиза генерируется на английском языке из коммитов после последнего **опубликованного** стабильного релиза, без дублирования заголовка GitHub. Сообщения коммитов должны быть на английском; при смешанном языке публикация останавливается. История выпусков — в [GitHub Releases](https://github.com/medneem/S3Drive/releases), история расследований — в [docs/](docs/).
 
 ## Антивирусы и доверие к сборке
 

@@ -983,6 +983,16 @@ class MainWindow(QMainWindow):
                         # Existing installation needs a one-time UAC migration.
                         run_admin("setup-control", profile.id)
                         send_control("stop", profile)
+                    except RuntimeError as exc:
+                        if str(exc) != "Внутренняя ошибка управления службой.":
+                            # In particular, never bypass failed VFS upload checks.
+                            raise
+                        # An updated GUI may still be talking to the older,
+                        # already-installed S3DriveControl.exe. With explicit
+                        # user-triggered UAC approval, upgrade only the broker
+                        # and retry the SAME safe stop protocol once.
+                        run_admin("repair-control", profile.id)
+                        send_control("stop", profile)
                     notify_explorer()
             else:
                 self.mounts.stop(profile.id)

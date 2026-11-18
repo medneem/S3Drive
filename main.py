@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import time
 import uuid
+from html import escape
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QObject, QRunnable, QThreadPool, Signal
@@ -39,6 +41,7 @@ from transfer_monitor import read_user_snapshot, read_service_snapshot, Transfer
 from legacy_startup import remove_legacy_tray_autostart
 from localization import tr, set_language, get_language, read_language
 from log_access import TransferErrorNotices, profile_log_path
+from maintenance import StorageUsage, storage_usage, format_size, format_total, clear_user_log
 
 
 class QMessageBox(QtMessageBox):
@@ -98,6 +101,24 @@ class _MonitorTask(QRunnable):
         except Exception as exc:
             self.signals.finished.emit(self.profile.id, None, str(exc))
 
+
+
+class _StorageSignals(QObject):
+    finished = Signal(object)
+
+
+class _StorageTask(QRunnable):
+    """Scan cache and log directories without blocking the GUI."""
+    def __init__(self, profiles: list[Profile]):
+        super().__init__()
+        self.profiles = list(profiles)
+        self.signals = _StorageSignals()
+
+    def run(self):
+        try:
+            self.signals.finished.emit(storage_usage(self.profiles))
+        except Exception as exc:
+            self.signals.finished.emit(exc)
 
 
 class _UpdateSignals(QObject):
@@ -359,20 +380,10 @@ class MainWindow(QMainWindow):
         self.mount_button = QPushButton(tr("Подключить"))
         self.unmount_button = QPushButton(tr("Отключить"))
         self.remove_service_button = QPushButton(tr("Удалить службу"))
-        self.clear_cache_button = QPushButton(tr("Очистить кэш"))
-        self.open_logs_button = QPushButton(tr("Открыть логи"))
-        self.open_logs_button.setToolTip(tr("Открыть журналы выбранного подключения."))
-        self.clear_cache_button.setToolTip(tr(
-            "После подтверждения проверяет отсутствие незавершённых загрузок, "
-            "отключает диск и очищает его локальный VFS-кэш. "
-            "При незавершённых передачах или ошибках ничего не удаляет."
-        ))
         actions.addWidget(self.add_button)
         actions.addWidget(self.save_button)
         actions.addWidget(self.remove_button)
-        actions.addWidget(self.open_logs_button)
         actions.addStretch()
-        actions.addWidget(self.clear_cache_button)
         actions.addWidget(self.remove_service_button)
         actions.addWidget(self.unmount_button)
         actions.addWidget(self.mount_button)
@@ -384,16 +395,15 @@ class MainWindow(QMainWindow):
         self.mount_button.clicked.connect(self.mount_profile)
         self.unmount_button.clicked.connect(self.unmount_profile)
         self.remove_service_button.clicked.connect(self.remove_service_profile)
-        self.clear_cache_button.clicked.connect(self.clear_cache_profile)
-        self.open_logs_button.clicked.connect(self.open_logs)
         self.error_notices = TransferErrorNotices()
         self.transfer_error_profile_id: str | None = None
         self.transfer_error_link = QLabel()
         self.transfer_error_link.setTextFormat(Qt.TextFormat.RichText)
         self.transfer_error_link.setOpenExternalLinks(False)
         self.transfer_error_link.linkActivated.connect(self.open_transfer_error_logs)
-        self.statusBar().addPermanentWidget(self.transfer_error_link)
+        self.statusBar().addWidget(self.transfer_error_link)
         self.transfer_error_link.hide()
+        self.statusBar().hide()
         self.retranslate_ui()
         self.pending_mounts: dict[str, tuple[Profile, float]] = {}
         self.refresh_items()
@@ -426,7 +436,6 @@ class MainWindow(QMainWindow):
         self.monitor_timer = QTimer(self)
         self.monitor_timer.timeout.connect(self.poll_transfers)
         self.monitor_timer.start(1500)
-        self.statusBar().showMessage(tr("Конфигурация: {config} | Кэш и журналы: {data}", config=config_path(), data=app_data_dir()))
         self.available_release: UpdateInfo | None = None
         self.update_pool = QThreadPool(self)
         self.update_pool.setMaxThreadCount(1)
@@ -474,23 +483,11 @@ class MainWindow(QMainWindow):
             (self.remove_button, "Удалить"),
             (self.mount_button, "Подключить"),
             (self.remove_service_button, "Удалить службу"),
-            (self.clear_cache_button, "Очистить кэш"),
-            (self.open_logs_button, "Открыть логи"),
         ):
             button.setText(tr(caption))
-        self.clear_cache_button.setToolTip(tr(
-            "После подтверждения проверяет отсутствие незавершённых загрузок, "
-            "отключает диск и очищает его локальный VFS-кэш. "
-            "При незавершённых передачах или ошибках ничего не удаляет."
-        ))
-        self.open_logs_button.setToolTip(tr("Открыть журналы выбранного подключения."))
         self.transfer_error_link.setText(
             '<a href="open-log">' + tr("Ошибки передачи — открыть журнал rclone") + '</a>'
         )
-        self.statusBar().showMessage(tr(
-            "Конфигурация: {config} | Кэш и журналы: {data}",
-            config=config_path(), data=app_data_dir(),
-        ))
         self.unmount_button.setText(tr("Отключить"))
         self.update_status()
         if self.selected_profile() is None:
@@ -1284,8 +1281,7 @@ class MainWindow(QMainWindow):
         profile = self.selected_profile()
         if profile is None:
             self.remove_service_button.setEnabled(False)
-            self.clear_cache_button.setEnabled(False)
-            self.unmount_button.setEnabled(False)
+                self.unmount_button.setEnabled(False)
             self.mount_button.setEnabled(True)
             return
         service = service_status(profile.id)
@@ -1294,7 +1290,6 @@ class MainWindow(QMainWindow):
         active = service_running or user_running
         ready = active and os.path.isdir(disk_root(profile.drive))
         self.remove_service_button.setEnabled(service == SERVICE_STOPPED)
-        self.clear_cache_button.setEnabled(active)
         self.unmount_button.setEnabled(active)
         self.unmount_button.setText(
             tr("Остановить службу и диск") if service is not None

@@ -12,6 +12,7 @@ import re
 import uuid
 from pathlib import Path
 
+from profiles import s3_mount_root
 from windows_service import (
     SERVICE_RUNNING, SERVICE_STOPPED, _sc, check_drive_free,
     config_text, protect_file, service_dir, service_name, service_status,
@@ -82,7 +83,7 @@ def _settings_fingerprint(config: str, mount_source: str) -> str:
 
 def config_fingerprint(profile) -> str:
     profile.validate()
-    return _settings_fingerprint(config_text(profile), profile.bucket.strip("/"))
+    return _settings_fingerprint(config_text(profile), s3_mount_root(profile.bucket))
 
 
 def enroll_profile(profile_id: str, owner_sid: str, *, drive: str,

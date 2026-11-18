@@ -42,6 +42,7 @@ from legacy_startup import remove_legacy_tray_autostart
 from localization import tr, set_language, get_language, read_language
 from log_access import TransferErrorNotices, profile_log_path
 from maintenance import StorageUsage, storage_usage, format_size, format_total, clear_user_log, service_logs_root
+from cache_ops import erase_cache_directory
 
 
 class QMessageBox(QtMessageBox):
@@ -1035,22 +1036,48 @@ class MainWindow(QMainWindow):
             return False
 
     def remove_profile(self):
+        """Explicitly delete one mount, service, cache and logs, never other profiles."""
         if self.settings_load_error:
-            QMessageBox.warning(self, "Ошибка config.json", "Удаление заблокировано из-за ошибки чтения конфигурации.")
+            QMessageBox.warning(self, "Ошибка config.json",
+                                "Удаление заблокировано из-за ошибки чтения конфигурации.")
             return
         profile = self.selected_profile()
         if profile is None:
             return
-        if self.mounts.is_mounted(profile.id) or service_status(profile.id) is not None:
-            QMessageBox.warning(self, "Подключение существует",
-                "Сначала отключите диск и удалите соответствующую службу Windows.")
-            return
-        if QMessageBox.question(self, "Удалить профиль", f"Удалить «{profile.name}»?") != QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(
+            self, "Удалить подключение",
+            tr("Вы действительно хотите удалить подключение «{name}» ({drive})?\n\n"
+               "S3Drive сначала безопасно остановит диск и службу, затем безвозвратно "
+               "удалит профиль, его кэш и журналы. Данные на самом S3 останутся.\n\n"
+               "ВНИМАНИЕ: если диск ранее завершился аварийно, в локальном кэше "
+               "могут остаться неотправленные файлы — они также будут удалены. "
+               "При незавершённых передачах работающего диска удаление будет отменено.",
+               name=profile.name, drive=profile.drive),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        ) != QMessageBox.StandardButton.Yes:
             return
         try:
+            # Fail closed on queued/active/errored writes. These methods first
+            # verify the VFS and stop the mount before removing its cache.
+            if self.mounts.is_mounted(profile.id):
+                self.mounts.clear_cache(profile.id)
+            state = service_status(profile.id)
+            if state is not None or profile.service_mode:
+                # The elevated transaction checks VFS on a running service,
+                # safely stops and unregisters it, then deletes only its UUID.
+                run_admin("delete-profile-data", profile.id)
+                notify_explorer()
+            cache_root = app_data_dir() / "cache"
+            erase_cache_directory(cache_root / profile.id, parent=cache_root)
+            clear_user_log(profile.id)
+            # Remove credentials from config only AFTER cleanup succeeded, so
+            # a transient Windows lock/UAC rejection leaves a retryable profile.
             updated = [p for p in self.profiles if p.id != profile.id]
             self.store.save(updated)
             self.profiles = updated
+            self.pending_mounts.pop(profile.id, None)
+            self.hide_transfer_popup()
             self.refresh_items()
             self.new_profile()
         except Exception as exc:

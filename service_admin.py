@@ -10,7 +10,7 @@ import json
 import sys
 from pathlib import Path
 
-from profiles import ProfileStore, config_path
+from profiles import ProfileStore, config_path, s3_mount_root
 from service_control import enroll_profile, validate_owner_sid
 from service_control_installer import install_control_service
 from windows_service import (
@@ -44,7 +44,7 @@ def run_action(action: str, profile_id: str, owner_sid: str | None = None) -> No
                 raise ValueError("Профиль отсутствует в config.json.")
             install_and_start(profile, config_path().parent / "rclone.exe")
             enroll_profile(profile_id, owner_sid, drive=profile.drive,
-                           mount_source=profile.bucket.strip("/"))
+                           mount_source=s3_mount_root(profile.bucket))
         else:
             if service_status(profile_id) is None:
                 raise RuntimeError("Служба ещё не установлена.")

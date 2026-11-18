@@ -26,7 +26,7 @@ Documentation reflects **v1.5.6**. [Latest published release](https://github.com
 
 - Multiple profiles with a display name, Endpoint, Access Key, Secret Key, region, path-style setting, optional bucket, and Windows drive letter. Works with HTTP(S) S3-compatible providers such as QNAP and MinIO.
 - Leave Bucket blank to mount the S3 account root: accessible buckets become folders, provided the credentials allow `ListBuckets` / `s3:ListAllMyBuckets`.
-- To mount only a folder within a bucket, enter `bucket/folder` or `/bucket/folder/` in **Bucket / path**. For example, `/users/medneem/` mounts prefix `medneem/` from the `users` bucket as the root of the Windows drive.
+- To mount only a folder within a bucket, enter `bucket/folder` or `/bucket/folder/` in **Bucket / path**. For example, `/users/medneem/` mounts prefix `medneem/` from the `users` bucket as the root of the Windows drive. **Save** and **Connect** automatically append a trailing `/` to nested paths when it is missing; plain bucket names are left unchanged.
 - WinFsp network drives with a unique UNC path and the friendly profile name in Explorer, without exposing the internal network-share identifier in the display name.
 - Ordinary interactive-user mounts, background mounts after closing the GUI, or Windows services that start automatically after reboot.
 - rclone VFS write caching (`writes`), safe disconnect with upload-queue checks, and guarded cache clearing.

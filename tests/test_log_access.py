@@ -75,8 +75,8 @@ class TransferErrorNoticeTests(unittest.TestCase):
             folder = Path(root)
             logfile = folder / "rclone.log"
             logfile.write_text("INFO", encoding="utf-8")
-            with patch("main.profile_log_path", return_value=logfile), \\
-                 patch("main.os.startfile", create=True) as opener:
+            with (patch("main.profile_log_path", return_value=logfile),
+                  patch("main.os.startfile", create=True) as opener):
                 self.assertTrue(MainWindow._open_profile_logs(
                     Mock(), SimpleNamespace(service_mode=True)))
                 opener.assert_called_once_with(str(logfile))

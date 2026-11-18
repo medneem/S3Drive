@@ -38,6 +38,7 @@ from auto_update import (UpdateInfo, StagedUpdate, check_latest_release,
 from transfer_monitor import read_user_snapshot, read_service_snapshot, TransferSnapshot
 from legacy_startup import remove_legacy_tray_autostart
 from localization import tr, set_language, get_language, read_language
+from log_access import TransferErrorNotices, profile_log_path
 
 
 class QMessageBox(QtMessageBox):
@@ -359,6 +360,8 @@ class MainWindow(QMainWindow):
         self.unmount_button = QPushButton(tr("Отключить"))
         self.remove_service_button = QPushButton(tr("Удалить службу"))
         self.clear_cache_button = QPushButton(tr("Очистить кэш"))
+        self.open_logs_button = QPushButton(tr("Открыть логи"))
+        self.open_logs_button.setToolTip(tr("Открыть журналы выбранного подключения."))
         self.clear_cache_button.setToolTip(tr(
             "После подтверждения проверяет отсутствие незавершённых загрузок, "
             "отключает диск и очищает его локальный VFS-кэш. "
@@ -367,6 +370,7 @@ class MainWindow(QMainWindow):
         actions.addWidget(self.add_button)
         actions.addWidget(self.save_button)
         actions.addWidget(self.remove_button)
+        actions.addWidget(self.open_logs_button)
         actions.addStretch()
         actions.addWidget(self.clear_cache_button)
         actions.addWidget(self.remove_service_button)
@@ -381,6 +385,15 @@ class MainWindow(QMainWindow):
         self.unmount_button.clicked.connect(self.unmount_profile)
         self.remove_service_button.clicked.connect(self.remove_service_profile)
         self.clear_cache_button.clicked.connect(self.clear_cache_profile)
+        self.open_logs_button.clicked.connect(self.open_logs)
+        self.error_notices = TransferErrorNotices()
+        self.transfer_error_profile_id: str | None = None
+        self.transfer_error_link = QLabel()
+        self.transfer_error_link.setTextFormat(Qt.TextFormat.RichText)
+        self.transfer_error_link.setOpenExternalLinks(False)
+        self.transfer_error_link.linkActivated.connect(self.open_transfer_error_logs)
+        self.statusBar().addPermanentWidget(self.transfer_error_link)
+        self.transfer_error_link.hide()
         self.retranslate_ui()
         self.pending_mounts: dict[str, tuple[Profile, float]] = {}
         self.refresh_items()
@@ -462,6 +475,7 @@ class MainWindow(QMainWindow):
             (self.mount_button, "Подключить"),
             (self.remove_service_button, "Удалить службу"),
             (self.clear_cache_button, "Очистить кэш"),
+            (self.open_logs_button, "Открыть логи"),
         ):
             button.setText(tr(caption))
         self.clear_cache_button.setToolTip(tr(
@@ -469,6 +483,10 @@ class MainWindow(QMainWindow):
             "отключает диск и очищает его локальный VFS-кэш. "
             "При незавершённых передачах или ошибках ничего не удаляет."
         ))
+        self.open_logs_button.setToolTip(tr("Открыть журналы выбранного подключения."))
+        self.transfer_error_link.setText(
+            '<a href="open-log">' + tr("Ошибки передачи — открыть журнал rclone") + '</a>'
+        )
         self.statusBar().showMessage(tr(
             "Конфигурация: {config} | Кэш и журналы: {data}",
             config=config_path(), data=app_data_dir(),
@@ -1171,6 +1189,54 @@ class MainWindow(QMainWindow):
         task.signals.finished.connect(self.on_transfers)
         QThreadPool.globalInstance().start(task)
 
+    def _hide_transfer_error(self, profile_id: str) -> None:
+        if self.transfer_error_profile_id == profile_id:
+            self.transfer_error_profile_id = None
+            self.transfer_error_link.hide()
+
+    def _open_profile_logs(self, profile: Profile) -> bool:
+        """Open a directory for user mounts, or the readable service log itself.
+
+        LocalSystem service folders have a restricted ACL: opening their
+        directories in Explorer would fail for a normal user.
+        """
+        try:
+            path = profile_log_path(profile)
+            if profile.service_mode:
+                if not path.is_file():
+                    raise FileNotFoundError(tr("Журнал службы ещё не создан."))
+                os.startfile(str(path))
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                os.startfile(str(path.parent))
+            return True
+        except OSError as exc:
+            QMessageBox.warning(self, "Не удалось открыть журнал", str(exc))
+            return False
+
+    def open_logs(self) -> None:
+        profile = self.selected_profile()
+        if profile is None:
+            try:
+                directory = app_data_dir() / "logs"
+                directory.mkdir(parents=True, exist_ok=True)
+                os.startfile(str(directory))
+            except OSError as exc:
+                QMessageBox.warning(self, "Не удалось открыть журнал", str(exc))
+            return
+        if self._open_profile_logs(profile) and self.transfer_error_profile_id == profile.id:
+            self.error_notices.acknowledge(profile.id)
+            self._hide_transfer_error(profile.id)
+
+    def open_transfer_error_logs(self, _href: str = "") -> None:
+        profile_id = self.transfer_error_profile_id
+        profile = next((p for p in self.profiles if p.id == profile_id), None)
+        if profile is None:
+            return
+        if self._open_profile_logs(profile):
+            self.error_notices.acknowledge(profile.id)
+            self._hide_transfer_error(profile.id)
+
     def on_transfers(self, profile_id: str, snapshot: TransferSnapshot | None, error: str):
         self.monitor_pending = False
         profile = next((p for p in self.profiles if p.id == profile_id), None)
@@ -1183,6 +1249,9 @@ class MainWindow(QMainWindow):
             # Недостоверная статистика не должна скрывать уже открытую передачу.
             return
         self.monitor_last_error = ""
+        if not snapshot.errors:
+            self.error_notices.observe(profile_id, 0)
+            self._hide_transfer_error(profile_id)
         # Show our window for confirmed VFS uploads only. Windows Explorer
         # already owns the UI for downloads from the mounted drive.
         transferring = snapshot.has_upload_activity
@@ -1204,9 +1273,9 @@ class MainWindow(QMainWindow):
             self.hide_transfer_popup()
             self.dismissed_uploads.discard(profile_id)
             if snapshot.errors:
-                self.statusBar().showMessage(
-                    tr("S3Drive: обнаружены ошибки передачи. Проверьте журнал rclone."), 15000
-                )
+                if self.error_notices.observe(profile_id, snapshot.errors):
+                    self.transfer_error_profile_id = profile_id
+                    self.transfer_error_link.show()
             elif profile_id in self.uploads_seen:
                 self.uploads_seen.discard(profile_id)
                 self.statusBar().showMessage(tr("S3Drive: загрузка файлов на S3 завершена"), 8000)

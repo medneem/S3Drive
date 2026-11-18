@@ -310,6 +310,21 @@ def check_drive_free(drive: str) -> None:
     # Validate again in the elevated process. Never replace a real disk.
     if not re.fullmatch(r"[A-Z]:", drive):
         raise ValueError("Некорректная буква диска.")
+    if os.name == "nt":
+        import ctypes
+
+        # Path.exists() returns False for an INACCESSIBLE WinFsp mount too.
+        # Windows still owns its drive letter, even if listing M:\\ fails
+        # with ERROR_IO_DEVICE. Fail closed instead of mounting over it.
+        mask = ctypes.windll.kernel32.GetLogicalDrives()
+        if not mask:
+            raise OSError("Не удалось получить список дисков Windows.")
+        if mask & (1 << (ord(drive[0]) - ord("A"))):
+            raise RuntimeError(
+                f"Буква {drive} уже занята в Windows, возможно недоступным "
+                "подключением WinFsp. Не запускайте поверх неё вторую службу; "
+                "проверьте состояние rclone и ожидающие передачи."
+            )
     if Path(drive + "\\").exists():
         raise RuntimeError(f"Буква {drive} занята. Отключите предыдущий диск.")
 

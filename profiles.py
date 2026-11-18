@@ -87,6 +87,18 @@ class Profile:
             raise ValueError("Выберите службу Windows или пользовательский фон, но не оба варианта.")
 
 
+def normalize_profile_bucket_path(bucket: str) -> str:
+    """Show and persist a trailing slash for nested S3 directories only.
+
+    Keep the user's optional leading slash and leave account/bucket roots
+    unchanged. The rclone command independently normalizes its source.
+    """
+    path = bucket.strip("/")
+    if "/" in path and not bucket.endswith("/"):
+        return bucket + "/"
+    return bucket
+
+
 def s3_mount_root(bucket: str) -> str:
     """Canonical rclone root. A nested S3 prefix MUST end with '/'.
 

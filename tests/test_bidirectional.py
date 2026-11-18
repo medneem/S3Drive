@@ -170,7 +170,7 @@ class TransferDialogTests(unittest.TestCase):
         dialog.assert_not_called()
         ui.hide_transfer_popup.assert_called_once_with()
         self.assertNotIn(profile.id, ui.uploads_seen)
-        self.assertIn("uploads completed", ui.statusBar.return_value.showMessage.call_args.args[0].lower())
+        self.assertIn("uploads completed", ui._status_notice.call_args.args[0].lower())
 
     def test_only_ambiguous_service_transfer_does_not_open_window(self):
         from types import SimpleNamespace

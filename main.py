@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import time
 import uuid
+from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QObject, QRunnable, QThreadPool, Signal
+from PySide6.QtCore import Qt, QTimer, QObject, QRunnable, QThreadPool, Signal, Slot
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
@@ -39,6 +41,7 @@ from transfer_monitor import read_user_snapshot, read_service_snapshot, Transfer
 from legacy_startup import remove_legacy_tray_autostart
 from localization import tr, set_language, get_language, read_language
 from log_access import TransferErrorNotices, profile_log_path
+from maintenance import StorageUsage, storage_usage, format_size, format_total, clear_user_log
 
 
 class QMessageBox(QtMessageBox):
@@ -98,6 +101,35 @@ class _MonitorTask(QRunnable):
         except Exception as exc:
             self.signals.finished.emit(self.profile.id, None, str(exc))
 
+
+
+class _StorageSignals(QObject):
+    finished = Signal(object)
+
+
+class _StorageReceiver(QObject):
+    """Deliver worker results on Qt's GUI thread, never on the worker."""
+    def __init__(self, callback, parent: QObject):
+        super().__init__(parent)
+        self.callback = callback
+
+    @Slot(object)
+    def on_finished(self, report: object) -> None:
+        self.callback(report)
+
+
+class _StorageTask(QRunnable):
+    """Scan cache and log directories without blocking the GUI."""
+    def __init__(self, profiles: list[Profile]):
+        super().__init__()
+        self.profiles = list(profiles)
+        self.signals = _StorageSignals()
+
+    def run(self):
+        try:
+            self.signals.finished.emit(storage_usage(self.profiles))
+        except Exception as exc:
+            self.signals.finished.emit(exc)
 
 
 class _UpdateSignals(QObject):
@@ -359,20 +391,10 @@ class MainWindow(QMainWindow):
         self.mount_button = QPushButton(tr("Подключить"))
         self.unmount_button = QPushButton(tr("Отключить"))
         self.remove_service_button = QPushButton(tr("Удалить службу"))
-        self.clear_cache_button = QPushButton(tr("Очистить кэш"))
-        self.open_logs_button = QPushButton(tr("Открыть логи"))
-        self.open_logs_button.setToolTip(tr("Открыть журналы выбранного подключения."))
-        self.clear_cache_button.setToolTip(tr(
-            "После подтверждения проверяет отсутствие незавершённых загрузок, "
-            "отключает диск и очищает его локальный VFS-кэш. "
-            "При незавершённых передачах или ошибках ничего не удаляет."
-        ))
         actions.addWidget(self.add_button)
         actions.addWidget(self.save_button)
         actions.addWidget(self.remove_button)
-        actions.addWidget(self.open_logs_button)
         actions.addStretch()
-        actions.addWidget(self.clear_cache_button)
         actions.addWidget(self.remove_service_button)
         actions.addWidget(self.unmount_button)
         actions.addWidget(self.mount_button)
@@ -384,16 +406,15 @@ class MainWindow(QMainWindow):
         self.mount_button.clicked.connect(self.mount_profile)
         self.unmount_button.clicked.connect(self.unmount_profile)
         self.remove_service_button.clicked.connect(self.remove_service_profile)
-        self.clear_cache_button.clicked.connect(self.clear_cache_profile)
-        self.open_logs_button.clicked.connect(self.open_logs)
         self.error_notices = TransferErrorNotices()
         self.transfer_error_profile_id: str | None = None
         self.transfer_error_link = QLabel()
         self.transfer_error_link.setTextFormat(Qt.TextFormat.RichText)
         self.transfer_error_link.setOpenExternalLinks(False)
         self.transfer_error_link.linkActivated.connect(self.open_transfer_error_logs)
-        self.statusBar().addPermanentWidget(self.transfer_error_link)
+        self.statusBar().addWidget(self.transfer_error_link)
         self.transfer_error_link.hide()
+        self.statusBar().hide()
         self.retranslate_ui()
         self.pending_mounts: dict[str, tuple[Profile, float]] = {}
         self.refresh_items()
@@ -426,7 +447,6 @@ class MainWindow(QMainWindow):
         self.monitor_timer = QTimer(self)
         self.monitor_timer.timeout.connect(self.poll_transfers)
         self.monitor_timer.start(1500)
-        self.statusBar().showMessage(tr("Конфигурация: {config} | Кэш и журналы: {data}", config=config_path(), data=app_data_dir()))
         self.available_release: UpdateInfo | None = None
         self.update_pool = QThreadPool(self)
         self.update_pool.setMaxThreadCount(1)
@@ -437,6 +457,14 @@ class MainWindow(QMainWindow):
         self.release_check_timer.setSingleShot(True)
         self.release_check_timer.timeout.connect(self.check_release_on_startup)
         QTimer.singleShot(0, self.check_release_on_startup)
+
+    def _status_notice(self, message: str, _timeout: int = 0) -> None:
+        """Keep transient messages in the existing connection-status area.
+
+        The bottom QStatusBar is reserved exclusively for a clickable rclone
+        error; do not make it visible for progress or informational messages.
+        """
+        self.status.setText(message)
 
     def retranslate_ui(self) -> None:
         """Update static widgets in-place; never interrupt a mounted drive."""
@@ -474,40 +502,47 @@ class MainWindow(QMainWindow):
             (self.remove_button, "Удалить"),
             (self.mount_button, "Подключить"),
             (self.remove_service_button, "Удалить службу"),
-            (self.clear_cache_button, "Очистить кэш"),
-            (self.open_logs_button, "Открыть логи"),
         ):
             button.setText(tr(caption))
-        self.clear_cache_button.setToolTip(tr(
-            "После подтверждения проверяет отсутствие незавершённых загрузок, "
-            "отключает диск и очищает его локальный VFS-кэш. "
-            "При незавершённых передачах или ошибках ничего не удаляет."
-        ))
-        self.open_logs_button.setToolTip(tr("Открыть журналы выбранного подключения."))
         self.transfer_error_link.setText(
             '<a href="open-log">' + tr("Ошибки передачи — открыть журнал rclone") + '</a>'
         )
-        self.statusBar().showMessage(tr(
-            "Конфигурация: {config} | Кэш и журналы: {data}",
-            config=config_path(), data=app_data_dir(),
-        ))
         self.unmount_button.setText(tr("Отключить"))
         self.update_status()
         if self.selected_profile() is None:
             self.status.setText(tr("Новый профиль. Заполните поля и нажмите «Сохранить»."))
 
+    def open_settings_location(self, destination: str) -> None:
+        """Use only trusted application paths; never interpret a URL from HTML."""
+        try:
+            if destination == "config":
+                target = config_path()
+                if target.is_file():
+                    subprocess.Popen(["explorer.exe", "/select,", str(target)])
+                else:
+                    os.startfile(str(target.parent))
+            elif destination == "data":
+                target = app_data_dir()
+                target.mkdir(parents=True, exist_ok=True)
+                os.startfile(str(target))
+        except OSError as exc:
+            QMessageBox.warning(self, "Не удалось открыть каталог", str(exc))
+
     def open_settings(self) -> None:
-        """Save UI settings independently from running S3 services."""
+        """Manage UI preferences and per-profile maintenance in one dialog."""
         if self.settings_load_error:
             QMessageBox.warning(self, "Ошибка config.json",
                                 "Сохранение заблокировано из-за ошибки чтения config.json. "
                                 "Исправьте конфигурацию и перезапустите программу.")
             return
+        profile = self.selected_profile()
         dialog = QDialog(self)
+        dialog.setMinimumWidth(670)
         self._manual_update_dialog = dialog
         dialog.finished.connect(lambda: setattr(self, "_manual_update_dialog", None))
         dialog.setWindowTitle(tr("Настройки S3Drive"))
         layout = QVBoxLayout(dialog)
+
         form = QFormLayout()
         language = QComboBox()
         language.addItem("English", "en")
@@ -521,6 +556,115 @@ class MainWindow(QMainWindow):
         check_now = QPushButton(tr("Проверить обновление"))
         check_now.clicked.connect(lambda: self.check_release(manual=True))
         layout.addWidget(check_now)
+
+        paths_group = QGroupBox(tr("Файлы и каталоги"))
+        paths_form = QFormLayout(paths_group)
+        config_link = QLabel(f'<a href="config">{escape(str(config_path()))}</a>')
+        data_link = QLabel(f'<a href="data">{escape(str(app_data_dir()))}</a>')
+        for link in (config_link, data_link):
+            link.setTextFormat(Qt.TextFormat.RichText)
+            link.setWordWrap(True)
+            link.setOpenExternalLinks(False)
+            link.linkActivated.connect(self.open_settings_location)
+        paths_form.addRow(tr("Файл конфигурации:"), config_link)
+        paths_form.addRow(tr("Каталог кэша и журналов:"), data_link)
+        layout.addWidget(paths_group)
+
+        maintenance_group = QGroupBox(tr("Обслуживание"))
+        maintenance_form = QVBoxLayout(maintenance_group)
+        totals = QFormLayout()
+        total_cache = QLabel(tr("Подсчёт…"))
+        total_logs = QLabel(tr("Подсчёт…"))
+        totals.addRow(tr("Общий размер кэша:"), total_cache)
+        totals.addRow(tr("Общий размер логов:"), total_logs)
+        maintenance_form.addLayout(totals)
+        chosen = QLabel(
+            f"{profile.name} ({profile.drive})"
+            if profile is not None else tr("Подключение не выбрано")
+        )
+        chosen.setTextFormat(Qt.TextFormat.PlainText)
+        maintenance_form.addWidget(QLabel(tr("Выбранное подключение:")))
+        maintenance_form.addWidget(chosen)
+        row = QHBoxLayout()
+        clear_cache = QPushButton(tr("Очистить кэш") + " (…)") 
+        clear_logs = QPushButton(tr("Очистить логи") + " (…)") 
+        reload_sizes = QPushButton(tr("Обновить размеры"))
+        clear_cache.setToolTip(tr(
+            "После проверки завершённых передач безопасно отключает диск "
+            "и удаляет кэш выбранного подключения."
+        ))
+        clear_logs.setToolTip(tr(
+            "Для очистки журналов выбранное подключение должно быть остановлено."
+        ))
+        row.addWidget(clear_cache)
+        row.addWidget(clear_logs)
+        row.addStretch()
+        row.addWidget(reload_sizes)
+        maintenance_form.addLayout(row)
+        layout.addWidget(maintenance_group)
+
+        def refresh_buttons() -> None:
+            if profile is None:
+                clear_cache.setEnabled(False)
+                clear_logs.setEnabled(False)
+                return
+            service = service_status(profile.id)
+            active = service == SERVICE_RUNNING or self.mounts.is_mounted(profile.id)
+            clear_cache.setEnabled(active)
+            clear_logs.setEnabled(not active and service in (None, SERVICE_STOPPED))
+
+        def display_usage(result: object) -> None:
+            dialog._size_scanning = False
+            if not dialog.isVisible():
+                return
+            if isinstance(result, Exception):
+                total_cache.setText(tr("Недоступно"))
+                total_logs.setText(tr("Недоступно"))
+                clear_cache.setText(tr("Очистить кэш") + " (?)")
+                clear_logs.setText(tr("Очистить логи") + " (?)")
+            else:
+                usage: StorageUsage = result
+                total_cache.setText(format_total(usage.total_cache, usage.cache_incomplete))
+                total_logs.setText(format_total(usage.total_logs, usage.logs_incomplete))
+                own_cache = (usage.cache_by_profile.get(profile.id)
+                             if profile is not None else None)
+                own_logs = (usage.logs_by_profile.get(profile.id)
+                            if profile is not None else None)
+                clear_cache.setText(tr("Очистить кэш") + f" ({format_size(own_cache)})")
+                clear_logs.setText(tr("Очистить логи") + f" ({format_size(own_logs)})")
+            refresh_buttons()
+            if getattr(dialog, "_rescan_sizes", False):
+                dialog._rescan_sizes = False
+                refresh_sizes()
+
+        def refresh_sizes() -> None:
+            if getattr(dialog, "_size_scanning", False):
+                dialog._rescan_sizes = True
+                return
+            dialog._size_scanning = True
+            task = _StorageTask(self.profiles)
+            self._maintenance_task = task
+            task.signals.finished.connect(receiver.on_finished)
+            QThreadPool.globalInstance().start(task)
+
+        def clear_chosen_cache() -> None:
+            if profile is not None:
+                self.clear_cache_profile(profile=profile, parent=dialog)
+                refresh_buttons()
+                refresh_sizes()
+
+        def clear_chosen_logs() -> None:
+            if profile is not None:
+                self.clear_logs_profile(profile=profile, parent=dialog)
+                refresh_buttons()
+                refresh_sizes()
+
+        receiver = _StorageReceiver(display_usage, dialog)
+        clear_cache.clicked.connect(clear_chosen_cache)
+        clear_logs.clicked.connect(clear_chosen_logs)
+        reload_sizes.clicked.connect(refresh_sizes)
+        refresh_buttons()
+
         buttons = QHBoxLayout()
         buttons.addStretch()
         cancel = QPushButton(tr("Отмена"))
@@ -530,6 +674,7 @@ class MainWindow(QMainWindow):
         cancel.clicked.connect(dialog.reject)
         save.clicked.connect(dialog.accept)
         layout.addLayout(buttons)
+        QTimer.singleShot(0, refresh_sizes)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         selected = language.currentData()
@@ -573,7 +718,7 @@ class MainWindow(QMainWindow):
         task = _ReleaseCheckTask()
         task.signals.checked.connect(self.on_release_checked)
         if manual:
-            self.statusBar().showMessage(tr("Проверка обновлений…"))
+            self._status_notice(tr("Проверка обновлений…"))
         self.update_pool.start(task)
 
     def on_release_checked(self, release: UpdateInfo | None, error: str) -> None:
@@ -582,7 +727,7 @@ class MainWindow(QMainWindow):
         self._manual_release_check = False
         self._release_check_running = False
         if error:
-            self.statusBar().showMessage(
+            self._status_notice(
                 tr("Не удалось проверить обновления: {error}", error=error)
             )
             if manual:
@@ -601,7 +746,7 @@ class MainWindow(QMainWindow):
         self.update_button.setToolTip(tr("Доступна S3Drive v{version}", version=release.version))
         self.update_button.setEnabled(True)
         self.update_button.setVisible(True)
-        self.statusBar().showMessage(
+        self._status_notice(
             tr("Доступна новая версия S3Drive v{version}. Нажмите «Обновить».", version=release.version)
         )
         if manual:
@@ -628,7 +773,7 @@ class MainWindow(QMainWindow):
             return
         percent = min(100, max(0, written * 100 // expected))
         self.update_button.setText(tr("Загрузка… {percent}%", percent=percent))
-        self.statusBar().showMessage(tr(
+        self._status_notice(tr(
             "Скачивание S3Drive v{version}… {percent}%",
             version=self.available_release.version, percent=percent
         ))
@@ -638,7 +783,7 @@ class MainWindow(QMainWindow):
         if not self._downloading_update or not self.available_release:
             return
         self.update_button.setText(tr("Проверка SHA-256…"))
-        self.statusBar().showMessage(tr(
+        self._status_notice(tr(
             "Проверка SHA-256 S3Drive v{version}…",
             version=self.available_release.version
         ))
@@ -652,7 +797,7 @@ class MainWindow(QMainWindow):
         self.update_button.setText(tr("Загрузка… {percent}%", percent=0))
         self.update_spinner.start(90)
         self._animate_update_spinner()
-        self.statusBar().showMessage(tr(
+        self._status_notice(tr(
             "Скачивание S3Drive v{version}… {percent}%",
             version=self.available_release.version, percent=0
         ))
@@ -1043,7 +1188,7 @@ class MainWindow(QMainWindow):
                 install_explorer_network_label(profile.id, profile.name)
                 self._applied_network_labels[profile.id] = profile.name
             except OSError as exc:
-                self.statusBar().showMessage(
+                self._status_notice(
                     tr("Не удалось обновить имя диска {drive}: {error}",
                        drive=profile.drive, error=exc),
                     8000,
@@ -1098,22 +1243,26 @@ class MainWindow(QMainWindow):
                 )
         self.update_status()
 
-    def clear_cache_profile(self):
-        profile = self.selected_profile()
+    def clear_cache_profile(self, *, profile: Profile | None = None,
+                            parent: QWidget | None = None) -> bool:
+        """Preserve the existing safe cache-clear transaction for one profile."""
         if profile is None:
-            return
+            profile = self.selected_profile()
+        if profile is None:
+            return False
+        parent = parent or self
         svc_state = service_status(profile.id)
         active = svc_state == SERVICE_RUNNING or self.mounts.is_mounted(profile.id)
         if not active:
             QMessageBox.warning(
-                self, "Очистка кэша",
+                parent, "Очистка кэша",
                 "Для безопасной очистки диск должен быть подключён. "
                 "После аварийного завершения в кэше могут остаться неотправленные "
                 "файлы, поэтому удалять его без проверки нельзя.",
             )
-            return
+            return False
         answer = QMessageBox.question(
-            self, "Очистить кэш",
+            parent, "Очистить кэш",
             tr("Проверить загрузки, отключить диск {drive} "
             "и удалить локальный кэш?\n\n"
             "Это отключит диск до следующего ручного подключения. "
@@ -1123,7 +1272,7 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
-            return
+            return False
         try:
             if svc_state is not None:
                 run_admin("clear-cache", profile.id)
@@ -1133,13 +1282,56 @@ class MainWindow(QMainWindow):
             self.uploads_seen.discard(profile.id)
             self.hide_transfer_popup()
             QMessageBox.information(
-                self, "Кэш очищен",
+                parent, "Кэш очищен",
                 tr("Локальный кэш {name} очищен. Диск отключён. "
                 "Подключите его снова при необходимости.", name=profile.name),
             )
         except Exception as exc:
-            QMessageBox.warning(self, "Кэш не очищен", str(exc))
+            QMessageBox.warning(parent, "Кэш не очищен", str(exc))
+            self.update_status()
+            return False
         self.update_status()
+        return True
+
+    def clear_logs_profile(self, *, profile: Profile | None = None,
+                           parent: QWidget | None = None) -> bool:
+        """Clear only the selected mount's stopped log, never active handles."""
+        if profile is None:
+            profile = self.selected_profile()
+        if profile is None:
+            return False
+        parent = parent or self
+        state = service_status(profile.id)
+        if state == SERVICE_RUNNING or self.mounts.is_mounted(profile.id):
+            QMessageBox.warning(parent, "Очистка журналов",
+                tr("Отключите выбранное подключение перед очисткой его журналов."))
+            return False
+        if state not in (None, SERVICE_STOPPED):
+            QMessageBox.warning(parent, "Очистка журналов",
+                tr("Дождитесь остановки службы перед очисткой журналов."))
+            return False
+        answer = QMessageBox.question(
+            parent, "Очистить логи",
+            tr("Удалить журналы подключения {name}?\n"
+               "Журналы других подключений сохранятся.", name=profile.name),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return False
+        try:
+            if profile.service_mode:
+                run_admin("clear-logs", profile.id)
+            else:
+                clear_user_log(profile.id)
+        except Exception as exc:
+            QMessageBox.warning(parent, "Журналы не очищены", str(exc))
+            return False
+        QMessageBox.information(
+            parent, "Журналы очищены",
+            tr("Журналы подключения {name} удалены, если существовали.", name=profile.name),
+        )
+        return True
 
     def hide_transfer_popup(self):
         if self.transfer_popup is not None:
@@ -1193,6 +1385,7 @@ class MainWindow(QMainWindow):
         if self.transfer_error_profile_id == profile_id:
             self.transfer_error_profile_id = None
             self.transfer_error_link.hide()
+            self.statusBar().hide()
 
     def _open_profile_logs(self, profile: Profile) -> bool:
         """Open a directory for user mounts, or the readable service log itself.
@@ -1214,20 +1407,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Не удалось открыть журнал", str(exc))
             return False
 
-    def open_logs(self) -> None:
-        profile = self.selected_profile()
-        if profile is None:
-            try:
-                directory = app_data_dir() / "logs"
-                directory.mkdir(parents=True, exist_ok=True)
-                os.startfile(str(directory))
-            except OSError as exc:
-                QMessageBox.warning(self, "Не удалось открыть журнал", str(exc))
-            return
-        if self._open_profile_logs(profile) and self.transfer_error_profile_id == profile.id:
-            self.error_notices.acknowledge(profile.id)
-            self._hide_transfer_error(profile.id)
-
     def open_transfer_error_logs(self, _href: str = "") -> None:
         profile_id = self.transfer_error_profile_id
         profile = next((p for p in self.profiles if p.id == profile_id), None)
@@ -1245,7 +1424,7 @@ class MainWindow(QMainWindow):
         if snapshot is None:
             if error != self.monitor_last_error:
                 self.monitor_last_error = error
-                self.statusBar().showMessage(tr("Монитор загрузок: {error}", error=error[:170]), 12000)
+                self._status_notice(tr("Монитор загрузок: {error}", error=error[:170]), 12000)
             # Недостоверная статистика не должна скрывать уже открытую передачу.
             return
         self.monitor_last_error = ""
@@ -1275,16 +1454,17 @@ class MainWindow(QMainWindow):
             if snapshot.errors:
                 if self.error_notices.observe(profile_id, snapshot.errors):
                     self.transfer_error_profile_id = profile_id
+                    self.statusBar().clearMessage()
                     self.transfer_error_link.show()
+                    self.statusBar().show()
             elif profile_id in self.uploads_seen:
                 self.uploads_seen.discard(profile_id)
-                self.statusBar().showMessage(tr("S3Drive: загрузка файлов на S3 завершена"), 8000)
+                self._status_notice(tr("S3Drive: загрузка файлов на S3 завершена"), 8000)
 
     def update_status(self):
         profile = self.selected_profile()
         if profile is None:
             self.remove_service_button.setEnabled(False)
-            self.clear_cache_button.setEnabled(False)
             self.unmount_button.setEnabled(False)
             self.mount_button.setEnabled(True)
             return
@@ -1294,7 +1474,6 @@ class MainWindow(QMainWindow):
         active = service_running or user_running
         ready = active and os.path.isdir(disk_root(profile.drive))
         self.remove_service_button.setEnabled(service == SERVICE_STOPPED)
-        self.clear_cache_button.setEnabled(active)
         self.unmount_button.setEnabled(active)
         self.unmount_button.setText(
             tr("Остановить службу и диск") if service is not None

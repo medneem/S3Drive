@@ -45,7 +45,7 @@ class ManualUpdateButtonTests(unittest.TestCase):
             _manual_release_check=False,
             _release_check_running=True,
             update_button=Mock(),
-            statusBar=Mock(return_value=status),
+            _status_notice=Mock(),
         )
         MainWindow.on_release_checked(gui, release(), "")
         self.assertEqual(gui.available_release.version, "1.3.0")
@@ -58,7 +58,7 @@ class ManualUpdateButtonTests(unittest.TestCase):
             update_button=Mock(), update_spinner=Mock(),
             _animate_update_spinner=Mock(),
             update_pool=Mock(),
-            statusBar=Mock(),
+            _status_notice=Mock(),
             on_release_progress=Mock(), on_release_verifying=Mock(),
             on_release_downloaded=Mock(),
         )
@@ -157,7 +157,7 @@ class ManualUpdateButtonTests(unittest.TestCase):
         gui = SimpleNamespace(
             store=SimpleNamespace(check_updates_on_startup=False),
             _release_check_running=False, _manual_release_check=False,
-            update_pool=Mock(), statusBar=Mock(), on_release_checked=Mock(),
+            update_pool=Mock(), _status_notice=Mock(), on_release_checked=Mock(),
         )
         MainWindow.check_release(gui, manual=True)
         gui.update_pool.start.assert_called_once()
@@ -175,19 +175,19 @@ class ManualUpdateButtonTests(unittest.TestCase):
         gui = SimpleNamespace(
             available_release=None, _manual_release_check=True,
             _release_check_running=True, update_button=Mock(),
-            statusBar=Mock(),
+            _status_notice=Mock(),
         )
         with patch("main.QMessageBox") as message:
             MainWindow.on_release_checked(gui, None, "GitHub timeout")
             message.warning.assert_called_once()
-        self.assertIn("GitHub timeout", gui.statusBar.return_value.showMessage.call_args.args[0])
+        self.assertIn("GitHub timeout", gui._status_notice.call_args.args[0])
         self.assertFalse(gui._release_check_running)
 
     def test_automatic_check_failure_retries_without_interrupting_user(self):
         gui = SimpleNamespace(
             available_release=None, _manual_release_check=False,
             _release_check_running=True, update_button=Mock(),
-            statusBar=Mock(), release_check_timer=Mock(),
+            _status_notice=Mock(), release_check_timer=Mock(),
             store=SimpleNamespace(check_updates_on_startup=True),
         )
         with patch("main.QMessageBox") as message:
@@ -200,7 +200,7 @@ class ManualUpdateButtonTests(unittest.TestCase):
         gui = SimpleNamespace(
             available_release=None, _manual_release_check=False,
             _release_check_running=True, update_button=Mock(),
-            statusBar=Mock(), release_check_timer=Mock(),
+            _status_notice=Mock(), release_check_timer=Mock(),
             store=SimpleNamespace(check_updates_on_startup=False),
         )
         MainWindow.on_release_checked(gui, None, "offline")
@@ -210,7 +210,7 @@ class ManualUpdateButtonTests(unittest.TestCase):
         gui = SimpleNamespace(
             available_release=None, _manual_release_check=True,
             _release_check_running=True, update_button=Mock(),
-            statusBar=Mock(),
+            _status_notice=Mock(),
         )
         with patch("main.QMessageBox") as message:
             MainWindow.on_release_checked(gui, None, "")

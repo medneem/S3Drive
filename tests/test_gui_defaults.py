@@ -111,11 +111,13 @@ class NewProfileDefaultsTests(unittest.TestCase):
         gui.service_checkbox.setChecked.assert_called_once_with(False)
 
 
-    def test_main_window_includes_cache_clear_button_and_transfer_monitor(self):
+    def test_main_window_moves_maintenance_to_settings_and_keeps_transfer_monitor(self):
         import inspect
         source = inspect.getsource(MainWindow)
-        self.assertIn('QPushButton(tr("Очистить кэш"))', source)
-        self.assertIn('self.clear_cache_button.clicked.connect(self.clear_cache_profile)', source)
+        self.assertNotIn('self.clear_cache_button', inspect.getsource(MainWindow.__init__))
+        self.assertNotIn('self.open_logs_button', inspect.getsource(MainWindow.__init__))
+        self.assertIn('QPushButton(tr("Очистить кэш")', inspect.getsource(MainWindow.open_settings))
+        self.assertIn('QPushButton(tr("Очистить логи")', inspect.getsource(MainWindow.open_settings))
         self.assertIn('self.monitor_timer.timeout.connect(self.poll_transfers)', source)
         self.assertIn("class TransferWindow(QDialog)", inspect.getsource(__import__("main")))
         self.assertIn("self.transfer_popup.show()", source)

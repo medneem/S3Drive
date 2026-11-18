@@ -1,4 +1,5 @@
 {
   "feat: добавить открытие журналов и отключить повторные уведомления об ошибках": "feat: open rclone logs from transfer-error warnings and add an Open Logs button; suppress duplicate alerts until new errors",
-  "fix: разрешить английские описания релизов для русских коммитов": "fix: generate English release notes for Russian commit subjects using reviewed translations"
+  "fix: разрешить английские описания релизов для русских коммитов": "fix: generate English release notes for Russian commit subjects using reviewed translations",
+  "feat: перенести обслуживание кэша и журналов в настройки S3Drive": "feat: move cache and log maintenance into Settings, display per-profile and total storage usage, and hide the empty error status bar"
 }

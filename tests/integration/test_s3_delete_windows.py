@@ -390,6 +390,30 @@ class WindowsS3DeletionTests(unittest.TestCase):
             self.assertFalse((root / "other").exists())
         self.assertEqual(self.remaining("medneem"), ["medneem", "medneem/visible.txt"])
 
+    def test_086_write_file_and_directory_into_preexisting_prefix(self):
+        """Windows writes inside a pre-existing bucket without re-creating it."""
+        self.seed("medneem/existing.txt")
+        with self.mounted(bucket=f"{self.bucket}/medneem") as root:
+            self.assertEqual((root / "existing.txt").read_bytes(), b"test-content")
+            (root / "sada.grc").write_bytes(b"small user file")
+            for _ in range(150):
+                if "medneem/sada.grc" in self.remaining("medneem/"):
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("File visible in WinFsp VFS was never uploaded to S3")
+
+            directory = root / "Benny Benassi - Hypnotica"
+            directory.mkdir()
+            for _ in range(150):
+                if "medneem/Benny Benassi - Hypnotica/" in self.remaining("medneem/"):
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("New Windows folder had no S3 directory marker")
+        self.assertIn("medneem/sada.grc", self.remaining("medneem/"))
+        self.assertIn("medneem/Benny Benassi - Hypnotica/", self.remaining("medneem/"))
+
     def test_09_real_windows_service_stops_via_authenticated_broker(self):
         """Real SCM + WinFsp rclone + VFS safety check + authenticated named pipe.
 

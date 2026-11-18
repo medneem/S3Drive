@@ -41,7 +41,7 @@ Documentation reflects **v1.5.6**. [Latest published release](https://github.com
 
 1. Download the [latest Windows x64 ZIP](https://github.com/medneem/S3Drive/releases/latest) and **extract the entire archive** into a writable folder. Do not launch from inside the ZIP.
 2. Run `S3Drive.exe` as a **standard Windows user**, not permanently as administrator.
-3. If WinFsp is missing, S3Drive offers to install the bundled `winfsp-2.2.26215.msi`. The MSI requires UAC. Finish installing WinFsp, then launch S3Drive again.
+3. If WinFsp is missing, S3Drive offers to install the bundled `winfsp-2.2.26286.msi`. The MSI requires UAC. Finish installing WinFsp, then launch S3Drive again.
 4. Create a profile: enter an S3 URL (`http://...` or `https://...`), access credentials, drive letter, and optionally a bucket name. QNAP S3 commonly needs **Path-style**. Use HTTP only on a trusted network.
 5. Optionally select the shortcut, open-after-connect, or Windows service settings; click **Save**, then **Connect**.
 

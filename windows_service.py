@@ -51,8 +51,8 @@ def service_status(profile_id: str) -> int | None:
 def service_command_requires_update(command: str) -> bool:
     """Old installations still carry INFO/stats flags in SCM BinPath."""
     import re
-    return (not re.search(r'--log-level(?:=|\\s+)ERROR(?:\\s|$)', command)
-            or re.search(r'--stats(?:=|\\s)', command) is not None
+    return (not re.search(r'--log-level(?:=|[ \t]+)ERROR(?:[ \t]|$)', command)
+            or re.search(r'--stats(?:=|[ \t])', command) is not None
             or '--stats-log-level' in command)
 
 

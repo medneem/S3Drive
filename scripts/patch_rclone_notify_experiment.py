@@ -37,9 +37,8 @@ def patch_tree(root: Path) -> None:
 // Rename renames a file.""",
         """\terr := parentDir.RemoveName(leaf)
 \tif err == nil && runtime.GOOS == "windows" && fsys.notifyHost != nil {
-\t\tif !fsys.notifyHost.Notify(dirPath, fuse.NOTIFY_RMDIR) {
-\t\t\tfs.Debugf(dirPath, "WinFsp RMDIR notification unavailable")
-\t\t}
+\t\tok := fsys.notifyHost.Notify(dirPath, fuse.NOTIFY_RMDIR)
+\t\tfs.Infof(dirPath, "Experimental WinFsp Notify(RMDIR) returned %v", ok)
 \t}
 \treturn translateError(err)
 }

@@ -501,18 +501,37 @@ class MainWindow(QMainWindow):
         if self.selected_profile() is None:
             self.status.setText(tr("Новый профиль. Заполните поля и нажмите «Сохранить»."))
 
+    def open_settings_location(self, destination: str) -> None:
+        """Use only trusted application paths; never interpret a URL from HTML."""
+        try:
+            if destination == "config":
+                target = config_path()
+                if target.is_file():
+                    subprocess.Popen(["explorer.exe", "/select,", str(target)])
+                else:
+                    os.startfile(str(target.parent))
+            elif destination == "data":
+                target = app_data_dir()
+                target.mkdir(parents=True, exist_ok=True)
+                os.startfile(str(target))
+        except OSError as exc:
+            QMessageBox.warning(self, "Не удалось открыть каталог", str(exc))
+
     def open_settings(self) -> None:
-        """Save UI settings independently from running S3 services."""
+        """Manage UI preferences and per-profile maintenance in one dialog."""
         if self.settings_load_error:
             QMessageBox.warning(self, "Ошибка config.json",
                                 "Сохранение заблокировано из-за ошибки чтения config.json. "
                                 "Исправьте конфигурацию и перезапустите программу.")
             return
+        profile = self.selected_profile()
         dialog = QDialog(self)
+        dialog.setMinimumWidth(670)
         self._manual_update_dialog = dialog
         dialog.finished.connect(lambda: setattr(self, "_manual_update_dialog", None))
         dialog.setWindowTitle(tr("Настройки S3Drive"))
         layout = QVBoxLayout(dialog)
+
         form = QFormLayout()
         language = QComboBox()
         language.addItem("English", "en")
@@ -526,6 +545,114 @@ class MainWindow(QMainWindow):
         check_now = QPushButton(tr("Проверить обновление"))
         check_now.clicked.connect(lambda: self.check_release(manual=True))
         layout.addWidget(check_now)
+
+        paths_group = QGroupBox(tr("Файлы и каталоги"))
+        paths_form = QFormLayout(paths_group)
+        config_link = QLabel(f'<a href="config">{escape(str(config_path()))}</a>')
+        data_link = QLabel(f'<a href="data">{escape(str(app_data_dir()))}</a>')
+        for link in (config_link, data_link):
+            link.setTextFormat(Qt.TextFormat.RichText)
+            link.setWordWrap(True)
+            link.setOpenExternalLinks(False)
+            link.linkActivated.connect(self.open_settings_location)
+        paths_form.addRow(tr("Файл конфигурации:"), config_link)
+        paths_form.addRow(tr("Каталог кэша и журналов:"), data_link)
+        layout.addWidget(paths_group)
+
+        maintenance_group = QGroupBox(tr("Обслуживание"))
+        maintenance_form = QVBoxLayout(maintenance_group)
+        totals = QFormLayout()
+        total_cache = QLabel(tr("Подсчёт…"))
+        total_logs = QLabel(tr("Подсчёт…"))
+        totals.addRow(tr("Общий размер кэша:"), total_cache)
+        totals.addRow(tr("Общий размер логов:"), total_logs)
+        maintenance_form.addLayout(totals)
+        chosen = QLabel(
+            f"{profile.name} ({profile.drive})"
+            if profile is not None else tr("Подключение не выбрано")
+        )
+        chosen.setTextFormat(Qt.TextFormat.PlainText)
+        maintenance_form.addWidget(QLabel(tr("Выбранное подключение:")))
+        maintenance_form.addWidget(chosen)
+        row = QHBoxLayout()
+        clear_cache = QPushButton(tr("Очистить кэш") + " (…)") 
+        clear_logs = QPushButton(tr("Очистить логи") + " (…)") 
+        reload_sizes = QPushButton(tr("Обновить размеры"))
+        clear_cache.setToolTip(tr(
+            "После проверки завершённых передач безопасно отключает диск "
+            "и удаляет кэш выбранного подключения."
+        ))
+        clear_logs.setToolTip(tr(
+            "Для очистки журналов выбранное подключение должно быть остановлено."
+        ))
+        row.addWidget(clear_cache)
+        row.addWidget(clear_logs)
+        row.addStretch()
+        row.addWidget(reload_sizes)
+        maintenance_form.addLayout(row)
+        layout.addWidget(maintenance_group)
+
+        def refresh_buttons() -> None:
+            if profile is None:
+                clear_cache.setEnabled(False)
+                clear_logs.setEnabled(False)
+                return
+            service = service_status(profile.id)
+            active = service == SERVICE_RUNNING or self.mounts.is_mounted(profile.id)
+            clear_cache.setEnabled(active)
+            clear_logs.setEnabled(not active and service in (None, SERVICE_STOPPED))
+
+        def display_usage(result: object) -> None:
+            dialog._size_scanning = False
+            if not dialog.isVisible():
+                return
+            if isinstance(result, Exception):
+                total_cache.setText(tr("Недоступно"))
+                total_logs.setText(tr("Недоступно"))
+                clear_cache.setText(tr("Очистить кэш") + " (?)")
+                clear_logs.setText(tr("Очистить логи") + " (?)")
+            else:
+                usage: StorageUsage = result
+                total_cache.setText(format_total(usage.total_cache, usage.cache_incomplete))
+                total_logs.setText(format_total(usage.total_logs, usage.logs_incomplete))
+                own_cache = (usage.cache_by_profile.get(profile.id)
+                             if profile is not None else None)
+                own_logs = (usage.logs_by_profile.get(profile.id)
+                            if profile is not None else None)
+                clear_cache.setText(tr("Очистить кэш") + f" ({format_size(own_cache)})")
+                clear_logs.setText(tr("Очистить логи") + f" ({format_size(own_logs)})")
+            refresh_buttons()
+            if getattr(dialog, "_rescan_sizes", False):
+                dialog._rescan_sizes = False
+                refresh_sizes()
+
+        def refresh_sizes() -> None:
+            if getattr(dialog, "_size_scanning", False):
+                dialog._rescan_sizes = True
+                return
+            dialog._size_scanning = True
+            task = _StorageTask(self.profiles)
+            self._maintenance_task = task
+            task.signals.finished.connect(display_usage)
+            QThreadPool.globalInstance().start(task)
+
+        def clear_chosen_cache() -> None:
+            if profile is not None:
+                self.clear_cache_profile(profile=profile, parent=dialog)
+                refresh_buttons()
+                refresh_sizes()
+
+        def clear_chosen_logs() -> None:
+            if profile is not None:
+                self.clear_logs_profile(profile=profile, parent=dialog)
+                refresh_buttons()
+                refresh_sizes()
+
+        clear_cache.clicked.connect(clear_chosen_cache)
+        clear_logs.clicked.connect(clear_chosen_logs)
+        reload_sizes.clicked.connect(refresh_sizes)
+        refresh_buttons()
+
         buttons = QHBoxLayout()
         buttons.addStretch()
         cancel = QPushButton(tr("Отмена"))
@@ -535,6 +662,7 @@ class MainWindow(QMainWindow):
         cancel.clicked.connect(dialog.reject)
         save.clicked.connect(dialog.accept)
         layout.addLayout(buttons)
+        QTimer.singleShot(0, refresh_sizes)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         selected = language.currentData()

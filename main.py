@@ -31,7 +31,7 @@ from windows_service import service_status, SERVICE_RUNNING, SERVICE_STOPPED
 from startup import StartupStatus, ensure_winfsp
 from single_instance import SingleInstance
 from mounts import MountManager
-from profiles import Profile, ProfileStore, app_data_dir, config_path
+from profiles import Profile, ProfileStore, app_data_dir, config_path, normalize_profile_bucket_path
 from version import APP_VERSION
 from auto_update import (UpdateInfo, StagedUpdate, check_latest_release,
                          stage_update, discard_update, launch_updater)
@@ -804,6 +804,7 @@ class MainWindow(QMainWindow):
             return False
         try:
             profile = self.draft()
+            profile.bucket = normalize_profile_bucket_path(profile.bucket)
             existing = next((p for p in self.profiles if p.id == profile.id), None)
             mounted = self.mounts.is_mounted(profile.id)
             svc = service_status(profile.id)
@@ -845,6 +846,9 @@ class MainWindow(QMainWindow):
             if mounted:
                 self.mounts.sessions[profile.id].profile = profile
             self.refresh_items(profile.id)
+            # Save and Connect both pass through save_profile(). Show the
+            # canonical path only after the config was written successfully.
+            self.bucket.setText(profile.bucket)
             self.status.setText(tr("Настройки сохранены (ключи защищены Windows DPAPI)."))
             return True
         except Exception as exc:

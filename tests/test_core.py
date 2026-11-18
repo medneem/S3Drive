@@ -69,14 +69,14 @@ class ProfileTests(unittest.TestCase):
                 p = sample(bucket=bucket_path)
                 self.assertEqual(
                     mount_command(p, "rclone.exe", Path("cache"), 12543)[2],
-                    "s3drive_mount:users/medneem",
+                    "s3drive_mount:users/medneem/",
                 )
 
     def test_nested_prefix_with_unicode_and_spaces_is_supported(self):
         p = sample(bucket="/users/Мои файлы/2026/")
         self.assertEqual(
             mount_command(p, "rclone.exe", Path("cache"), 12543)[2],
-            "s3drive_mount:users/Мои файлы/2026",
+            "s3drive_mount:users/Мои файлы/2026/",
         )
 
     def test_bucket_prefix_survives_config_round_trip(self):
@@ -88,8 +88,16 @@ class ProfileTests(unittest.TestCase):
             self.assertEqual(loaded[0].bucket, "/users/medneem/")
             self.assertEqual(
                 mount_command(loaded[0], "rclone.exe", Path("cache"), 12543)[2],
-                "s3drive_mount:users/medneem",
+                "s3drive_mount:users/medneem/",
             )
+
+    def test_prefix_mount_root_forces_directory_not_file_probe(self):
+        """rclone treats bucket/prefix without slash as a potential object key."""
+        from profiles import s3_mount_root
+        self.assertEqual(s3_mount_root("/users/medneem/"), "users/medneem/")
+        self.assertEqual(s3_mount_root("users/medneem"), "users/medneem/")
+        self.assertEqual(s3_mount_root("users"), "users")
+        self.assertEqual(s3_mount_root(""), "")
 
     def test_invalid_bucket_prefixes_are_rejected(self):
         for bad in ("/", "//", "users//medneem", "users/../secret",

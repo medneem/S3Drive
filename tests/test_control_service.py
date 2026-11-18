@@ -66,6 +66,16 @@ class ControlProtocolTests(unittest.TestCase):
                 self.assertEqual(saved["drive"], "S:")
                 self.assertNotIn("secret", (root / "owner.json").read_text("utf-8"))
 
+    def test_prefix_fingerprint_matches_canonical_service_mount_source(self):
+        from service_control import config_fingerprint, _settings_fingerprint
+        from windows_service import config_text
+        p = profile()
+        p.bucket = "/users/medneem/"
+        self.assertEqual(
+            config_fingerprint(p),
+            _settings_fingerprint(config_text(p), "users/medneem/"),
+        )
+
     def test_bucket_path_change_requires_service_reconfiguration(self):
         from service_control import config_fingerprint, handle_request
         p = profile()

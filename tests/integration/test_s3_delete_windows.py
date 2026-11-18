@@ -382,6 +382,14 @@ class WindowsS3DeletionTests(unittest.TestCase):
             self.assertFalse((root / self.bucket / "test").exists())
 
 
+    def test_085_prefix_with_same_named_file_mounts_directory(self):
+        """S3 may contain both an object named prefix and keys under prefix/."""
+        self.seed("medneem", "medneem/visible.txt", "other/hidden.txt")
+        with self.mounted(bucket=f"{self.bucket}/medneem") as root:
+            self.assertEqual((root / "visible.txt").read_bytes(), b"test-content")
+            self.assertFalse((root / "other").exists())
+        self.assertEqual(self.remaining("medneem"), ["medneem", "medneem/visible.txt"])
+
     def test_09_real_windows_service_stops_via_authenticated_broker(self):
         """Real SCM + WinFsp rclone + VFS safety check + authenticated named pipe.
 

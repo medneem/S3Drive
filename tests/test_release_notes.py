@@ -44,6 +44,30 @@ class ReleaseNotesTests(unittest.TestCase):
                 [("a" * 40, "fix: исправить название папки")],
             )
 
+    def test_curated_english_notes_for_russian_feature_and_release_fix(self):
+        commits = [
+            ("a5c60ff45e79cba836c2b29ac6c33828633826b2",
+             "feat: добавить открытие журналов и отключить повторные уведомления об ошибках"),
+            ("b" * 40,
+             "fix: разрешить английские описания релизов для русских коммитов"),
+        ]
+        notes = build_release_notes("v1.5.11", "v1.5.10", commits)
+        self.assertIn("## Features", notes)
+        self.assertIn("open rclone logs", notes)
+        self.assertIn("## Fixes", notes)
+        self.assertIn("English release notes", notes)
+        self.assertTrue(notes.isascii())
+        self.assertNotIn("## S3Drive", notes)
+        self.assertIn("compare/v1.5.10...v1.5.11", notes)
+
+    def test_russian_translation_must_not_change_commit_category(self):
+        from unittest.mock import patch
+        with patch("scripts.release_notes.ENGLISH_SUBJECT_TRANSLATIONS",
+                   {"fix: ошибка": "feat: add a new option"}):
+            with self.assertRaisesRegex(ValueError, "category"):
+                build_release_notes("v1.5.11", "v1.5.10",
+                                    [("a" * 40, "fix: ошибка")])
+
     def test_parses_git_log_and_rejects_malformed_records(self):
         raw = "a" * 40 + "\x1f" + "feat: add upload panel" + "\x1e\n"
         self.assertEqual(parse_git_log(raw),

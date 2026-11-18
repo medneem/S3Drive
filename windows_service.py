@@ -599,3 +599,25 @@ def remove_service(profile_id: str) -> None:
     (service_dir(profile_id) / "owner.json").unlink(missing_ok=True)
     # Keep the old VFS cache and log for recovery/debugging; credentials remain
     # protected under ProgramData and are not silently discarded.
+
+
+def delete_service_profile_data(profile_id: str) -> bool:
+    """Explicit user-approved removal of one SCM service and its private files.
+
+    Running mounts must pass the VFS pending/failed-write checks before
+    stopping. Never delete an active service or its cache if checks fail.
+    This function is invoked through the elevated helper, after the GUI's
+    destructive confirmation; it does not touch other service folders.
+    """
+    uuid.UUID(profile_id)
+    state = service_status(profile_id)
+    if state == SERVICE_RUNNING:
+        # Validates VFS idle, safely stops rclone and clears its VFS cache.
+        clear_service_cache(profile_id)
+        state = service_status(profile_id)
+    if state not in (None, SERVICE_STOPPED):
+        raise RuntimeError("Служба не остановлена. Данные профиля не удалены.")
+    if state == SERVICE_STOPPED:
+        remove_service(profile_id)
+    root = service_dir(profile_id)
+    return erase_cache_directory(root, parent=root.parent)

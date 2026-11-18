@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from cache_ops import ensure_cache_idle, ensure_uploads_idle, erase_cache_directory
+from profiles import s3_mount_root
 from network_drive import network_volume_name, native_network_volume_prefix
 from rclone_integrity import verify_bundled_rclone, verify_rclone_hash
 
@@ -200,7 +201,7 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
                     log: Path, htpasswd: Path, port: int) -> str:
     validate_service_profile(profile)
     return windows_command_line([
-        str(rclone), "mount", "s3drive_mount:" + profile.bucket.strip("/"),
+        str(rclone), "mount", "s3drive_mount:" + s3_mount_root(profile.bucket),
         profile.drive, "--config", str(config), "--vfs-cache-mode", "writes",
         "--vfs-write-back", "0s",
         # Prevent MSI installers from using the S3 account root for temporary

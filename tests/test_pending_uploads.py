@@ -7,9 +7,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from mounts import mount_command
+from mounts import mount_command, remote_environment
 from profiles import Profile
-from windows_service import _control_request, ensure_vfs_idle, service_command
+from windows_service import _control_request, ensure_vfs_idle, service_command, config_text
 
 
 def profile() -> Profile:
@@ -41,26 +41,26 @@ class PendingUploadTests(unittest.TestCase):
             with self.subTest(bucket=bucket):
                 p = profile()
                 p.bucket = bucket
-                cmd = mount_command(p, "rclone.exe", Path("cache"), 33333)
-                self.assertEqual(cmd.count("--s3-no-check-bucket"), 1)
-                service = service_command(
+                user_config = remote_environment(p)
+                self.assertEqual(
+                    user_config["RCLONE_CONFIG_S3DRIVE_MOUNT_NO_CHECK_BUCKET"],
+                    "true",
+                )
+                service_config = config_text(p)
+                self.assertIn("no_check_bucket = true", service_config)
+                self.assertIn("--s3-directory-markers", service_command(
                     p, Path("C:/rclone.exe"), Path("C:/rclone.conf"),
                     Path("C:/cache"), Path("C:/rclone.log"),
                     Path("C:/rc.htpasswd"), 33333,
-                )
-                self.assertEqual(service.count("--s3-no-check-bucket"), 1)
+                ))
 
     def test_account_root_keeps_bucket_creation_behavior(self):
         p = profile()
         self.assertEqual(p.bucket, "")
-        cmd = mount_command(p, "rclone.exe", Path("cache"), 33333)
-        service = service_command(
-            p, Path("C:/rclone.exe"), Path("C:/rclone.conf"),
-            Path("C:/cache"), Path("C:/rclone.log"),
-            Path("C:/rc.htpasswd"), 33333,
+        self.assertNotIn(
+            "RCLONE_CONFIG_S3DRIVE_MOUNT_NO_CHECK_BUCKET", remote_environment(p)
         )
-        self.assertNotIn("--s3-no-check-bucket", cmd)
-        self.assertNotIn("--s3-no-check-bucket", service)
+        self.assertNotIn("no_check_bucket", config_text(p))
 
     def test_service_stop_explains_actual_queued_unicode_names(self):
         name = "test/Bomfunk MC's – In Stereo [2000]/03 – Привет.flac"

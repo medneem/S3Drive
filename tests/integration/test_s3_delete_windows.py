@@ -382,5 +382,128 @@ class WindowsS3DeletionTests(unittest.TestCase):
             self.assertFalse((root / self.bucket / "test").exists())
 
 
+    def test_09_real_windows_service_stops_via_authenticated_broker(self):
+        """Real SCM + WinFsp rclone + VFS safety check + authenticated named pipe.
+
+        All resources are disposable on the hosted Windows CI runner. The
+        broker runs in a Python thread under the elevated CI account, while
+        rclone really runs as a LocalSystem Windows service. No production
+        credentials, profiles or services are used.
+        """
+        import base64
+        import hashlib
+        import json
+        import threading
+        from unittest.mock import patch
+
+        from service_control import (
+            config_fingerprint, current_user_sid, send_control, serve, wake_server,
+        )
+        from windows_service import (
+            SERVICE_RUNNING, SERVICE_STOPPED, _control_request, _sc,
+            config_text, service_command, service_name, service_status,
+        )
+
+        profile = Profile(
+            id=str(uuid.uuid4()), name="S3Drive CI stop test",
+            endpoint=self.endpoint, bucket=self.bucket,
+            access_key="test", secret_key="test",
+            drive=self.drive, service_mode=True,
+        )
+        root = self.folder / ("service-" + uuid.uuid4().hex[:12])
+        root.mkdir()
+        cache = root / "cache"
+        cache.mkdir()
+        config = root / "rclone.conf"
+        config.write_text(config_text(profile), encoding="utf-8")
+        logfile = root / "rclone.jsonl"
+        secret = "s3drive-ci-only-" + uuid.uuid4().hex
+        password_file = root / "rc.htpasswd"
+        password_file.write_text(
+            "s3drive:{SHA}" + base64.b64encode(
+                hashlib.sha1(secret.encode("utf-8")).digest()
+            ).decode("ascii") + "\n",
+            encoding="utf-8",
+        )
+        port = free_port()
+        (root / "control.json").write_text(
+            json.dumps({"port": port, "password": secret}), encoding="utf-8",
+        )
+        command = service_command(
+            profile, self.rclone, config, cache, logfile, password_file, port,
+        )
+        service = service_name(profile.id)
+        worker_errors = []
+        event = threading.Event()
+        broker = None
+        created = False
+        stopped_by_broker = False
+        try:
+            _sc("create", service, "binPath=", command, "start=", "auto",
+                "obj=", "LocalSystem", "DisplayName=", "S3Drive CI " + profile.drive)
+            created = True
+            _sc("start", service)
+
+            # SERVICE_RUNNING may precede rclone's authenticated RC server.
+            # Confirm the actual VFS is reachable and reports a safe cache.
+            for _ in range(120):
+                if service_status(profile.id) == SERVICE_RUNNING:
+                    try:
+                        stats = _control_request(port, secret, "vfs/stats")
+                        if "diskCache" in stats:
+                            break
+                    except (OSError, ValueError, KeyError):
+                        pass
+                time.sleep(0.25)
+            else:
+                detail = logfile.read_text("utf-8", errors="replace")[-4000:] if logfile.exists() else ""
+                self.fail("Windows service never exposed usable VFS stats:\n" + detail)
+
+            def broker_loop():
+                try:
+                    serve(event)
+                except Exception as exc:
+                    worker_errors.append(exc)
+
+            owner = current_user_sid()
+            enrollment = {
+                "owner_sid": owner,
+                "fingerprint": config_fingerprint(profile),
+                "drive": profile.drive,
+            }
+            # Only the installed owner may control this service, as in the
+            # real broker. service_dir points to this disposable test fixture.
+            with patch("service_control.load_enrollment", return_value=enrollment), \
+                 patch("windows_service.service_dir", return_value=root):
+                broker = threading.Thread(target=broker_loop, daemon=True)
+                broker.start()
+                send_control("stop", profile)
+                for _ in range(120):
+                    if service_status(profile.id) == SERVICE_STOPPED:
+                        stopped_by_broker = True
+                        break
+                    time.sleep(0.25)
+                self.assertTrue(stopped_by_broker, "SCM service remains running after broker stop")
+                self.assertFalse(worker_errors, f"Broker thread failed: {worker_errors}")
+        finally:
+            event.set()
+            if broker is not None:
+                wake_server()
+                broker.join(timeout=5)
+            if created:
+                # This is a disposable no-writes test service. On test failure,
+                # clean up SCM resources rather than leaving them on the runner.
+                try:
+                    if service_status(profile.id) == SERVICE_RUNNING:
+                        _sc("stop", service)
+                        for _ in range(100):
+                            if service_status(profile.id) == SERVICE_STOPPED:
+                                break
+                            time.sleep(0.2)
+                finally:
+                    _sc("delete", service)
+            print("Real SCM broker stop succeeded:", stopped_by_broker, flush=True)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

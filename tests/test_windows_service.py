@@ -337,8 +337,17 @@ class ServiceTests(unittest.TestCase):
         import ctypes
         from windows_service import check_drive_free
         with patch("pathlib.Path.exists", return_value=False), \
-             patch.object(ctypes.windll.kernel32, "GetLogicalDrives", return_value=0):
+             patch.object(ctypes.windll.kernel32, "GetLogicalDrives",
+                          return_value=1 << (ord("C") - ord("A"))):
             check_drive_free("M:")
+
+    def test_unavailable_windows_drive_mask_blocks_unsafe_start(self):
+        import ctypes
+        from windows_service import check_drive_free
+        with patch("pathlib.Path.exists", return_value=False), \
+             patch.object(ctypes.windll.kernel32, "GetLogicalDrives", return_value=0):
+            with self.assertRaisesRegex(OSError, "список дисков"):
+                check_drive_free("M:")
 
     def test_native_scm_create_start_stop_config_delete_without_sc_subprocess(self):
         import sys

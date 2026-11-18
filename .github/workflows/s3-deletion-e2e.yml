@@ -54,7 +54,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $msi = (Resolve-Path "tools/winfsp-2.2.26215.msi").Path
+          $msi = (Resolve-Path "tools/winfsp-2.2.26286.msi").Path
           $installerLog = Join-Path $env:RUNNER_TEMP "winfsp-install.log"
           $process = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
             "/i", """$msi""", "/qn", "/norestart", "/L*v", """$installerLog"""

@@ -8,9 +8,9 @@ $rcloneVersion = "1.76.0"
 $rcloneExpectedExeSha256 = "ACD80683E23151E93BBE0D6FFA74D26E542EC510332F630BEECB9944F8D1A623"
 $rcloneZipName = "rclone-v$rcloneVersion-windows-amd64.zip"
 $rcloneExpectedSha256 = "8B4FD2737ADE4E70C057EF4A49DEB7CFFE94B0FB9D7587C189D149823F21A1DC"
-$winfspTag = "v2.2B4"
-$winfspInstallerName = "winfsp-2.2.26215.msi"
-$winfspExpectedSha256 = "2ECB5C89405488A95BBD8A01875E02C48534FD37BBDFD84488F7590464D65944"
+$winfspTag = "v2.2B5"
+$winfspInstallerName = "winfsp-2.2.26286.msi"
+$winfspExpectedSha256 = "293FFB9BCC0B625C85079FE85FA77F8FE98170ABA51A02AC9C83D58F6C3B0E2F"
 
 $root = Split-Path -Parent $PSScriptRoot
 $tools = Join-Path $root "tools"

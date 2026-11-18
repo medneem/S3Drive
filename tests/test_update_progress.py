@@ -41,7 +41,7 @@ class UpdateProgressTests(unittest.TestCase):
         from localization import set_language
         button = Mock()
         status = Mock()
-        gui = SimpleNamespace(update_button=button, statusBar=lambda: status,
+        gui = SimpleNamespace(update_button=button, _status_notice=status.showMessage,
                               available_release=SimpleNamespace(version="1.5.3"),
                               _downloading_update=True)
         try:
@@ -59,7 +59,7 @@ class UpdateProgressTests(unittest.TestCase):
     def test_verification_replaces_percentage_without_claiming_success(self):
         button = Mock()
         status = Mock()
-        gui = SimpleNamespace(update_button=button, statusBar=lambda: status,
+        gui = SimpleNamespace(update_button=button, _status_notice=status.showMessage,
                               available_release=SimpleNamespace(version="1.5.3"),
                               _downloading_update=True)
         MainWindow.on_release_verifying(gui)

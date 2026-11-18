@@ -187,6 +187,12 @@ def config_text(profile) -> str:
         "region": profile.region,
         "force_path_style": str(profile.path_style).lower(),
     }
+    if profile.bucket:
+        # Do not attempt CreateBucket for an existing named bucket, especially
+        # on restricted keys. Including this in the protected config also
+        # changes the broker fingerprint and safely forces UAC reinstallation
+        # of any previously installed service.
+        config["s3drive_mount"]["no_check_bucket"] = "true"
     out = StringIO()
     config.write(out)
     return out.getvalue()

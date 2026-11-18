@@ -518,6 +518,32 @@ class ServiceTests(unittest.TestCase):
         }):
             ensure_vfs_idle({"port": 42, "password": "pw"})
 
+    def test_log_cleanup_refuses_running_service_and_preserves_log(self):
+        from windows_service import clear_service_log
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            logfile = root / "rclone.log"
+            logfile.write_text("active", encoding="utf-8")
+            with patch("windows_service.service_dir", return_value=root), \
+                 patch("windows_service.service_status", return_value=SERVICE_RUNNING):
+                with self.assertRaisesRegex(RuntimeError, "Остановите службу"):
+                    clear_service_log(sample().id)
+            self.assertEqual(logfile.read_text(encoding="utf-8"), "active")
+
+    def test_log_cleanup_deletes_only_stopped_service_log(self):
+        from windows_service import clear_service_log
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            logfile = root / "rclone.log"
+            logfile.write_text("old", encoding="utf-8")
+            protected = root / "control.json"
+            protected.write_text("do not touch", encoding="utf-8")
+            with patch("windows_service.service_dir", return_value=root), \
+                 patch("windows_service.service_status", return_value=SERVICE_STOPPED):
+                self.assertTrue(clear_service_log(sample().id))
+            self.assertFalse(logfile.exists())
+            self.assertEqual(protected.read_text(encoding="utf-8"), "do not touch")
+
     def test_cache_clear_refuses_stopped_service(self):
         from windows_service import clear_service_cache
         with patch("windows_service.service_status", return_value=SERVICE_STOPPED):

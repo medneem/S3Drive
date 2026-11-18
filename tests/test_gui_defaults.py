@@ -209,5 +209,25 @@ class NewProfileDefaultsTests(unittest.TestCase):
 
 
 
+    def test_credential_labels_and_path_style_remain_clear_in_both_languages(self):
+        """Connection-field captions should be unambiguous without provider examples."""
+        import inspect
+        from localization import set_language, tr
+        source = inspect.getsource(MainWindow)
+
+        self.assertIn('("Access Key / Login:", self.access)', source)
+        self.assertIn('("Access Key / Password:", self.secret)', source)
+        self.assertIn('self.path_style = QCheckBox(tr("Path-Style"))', source)
+        self.assertIn('self.path_style.setText(tr("Path-Style"))', source)
+        self.assertNotIn('Path-Style (для QNAP / MinIO)', source)
+        for language in ("en", "ru"):
+            with self.subTest(language=language):
+                set_language(language)
+                self.assertEqual(tr("Access Key / Login:"), "Access Key / Login:")
+                self.assertEqual(tr("Access Key / Password:"), "Access Key / Password:")
+                self.assertEqual(tr("Path-Style"), "Path-Style")
+        set_language("en")
+
+
 if __name__ == "__main__":
     unittest.main()

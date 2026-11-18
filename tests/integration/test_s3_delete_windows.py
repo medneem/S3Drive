@@ -404,9 +404,12 @@ class WindowsS3DeletionTests(unittest.TestCase):
             config_text, service_command, service_name, service_status,
         )
 
+        # Exercise a genuine nested bucket prefix, not only bucket root:
+        # this is the same mount shape as users/medneem in the bug report.
+        self.seed("medneem/visible.txt", "other/hidden.txt")
         profile = Profile(
             id=str(uuid.uuid4()), name="S3Drive CI stop test",
-            endpoint=self.endpoint, bucket=self.bucket,
+            endpoint=self.endpoint, bucket=f"/{self.bucket}/medneem/",
             access_key="test", secret_key="test",
             drive=self.drive, service_mode=True,
         )
@@ -458,6 +461,21 @@ class WindowsS3DeletionTests(unittest.TestCase):
             else:
                 detail = logfile.read_text("utf-8", errors="replace")[-4000:] if logfile.exists() else ""
                 self.fail("Windows service never exposed usable VFS stats:\n" + detail)
+
+            # The service is not healthy solely because SCM reports RUNNING.
+            # The mounted drive must actually serve objects under the prefix.
+            mounted_root = Path(self.drive + "\\\\")
+            for _ in range(80):
+                try:
+                    if (mounted_root / "visible.txt").read_bytes() == b"test-content":
+                        break
+                except OSError:
+                    pass
+                time.sleep(0.25)
+            else:
+                self.fail("SCM reports RUNNING, but the nested S3 prefix is unreadable")
+            self.assertFalse((mounted_root / "other").exists(),
+                             "Mount escaped its configured S3 prefix")
 
             def broker_loop():
                 try:

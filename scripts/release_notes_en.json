@@ -1,0 +1,4 @@
+{
+  "feat: добавить открытие журналов и отключить повторные уведомления об ошибках": "feat: open rclone logs from transfer-error warnings and add an Open Logs button; suppress duplicate alerts until new errors",
+  "fix: разрешить английские описания релизов для русских коммитов": "fix: generate English release notes for Russian commit subjects using reviewed translations"
+}

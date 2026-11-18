@@ -29,7 +29,7 @@ from service_control import (
     ReconfigurationRequired, send_control,
 )
 from drive_labels import notify_explorer, read_native_volume_label, install_explorer_network_label
-from windows_service import service_status, SERVICE_RUNNING, SERVICE_STOPPED
+from windows_service import service_status, service_logging_needs_update, SERVICE_RUNNING, SERVICE_STOPPED
 from startup import StartupStatus, ensure_winfsp
 from single_instance import SingleInstance
 from mounts import MountManager
@@ -1113,6 +1113,11 @@ class MainWindow(QMainWindow):
                 if state is None:
                     # First installation: UAC only once, configure protected
                     # LocalSystem broker and enroll the interactive user SID.
+                    run_admin("install", profile.id)
+                elif state == SERVICE_STOPPED and service_logging_needs_update(profile.id):
+                    # Old installed services retain INFO/stats in the SCM
+                    # BinPath. Only a user-requested reconnect after a safe
+                    # stop may update those arguments, with UAC approval.
                     run_admin("install", profile.id)
                 elif state == SERVICE_STOPPED:
                     try:

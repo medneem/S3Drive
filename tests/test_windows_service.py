@@ -62,6 +62,35 @@ class ServiceTests(unittest.TestCase):
         self.assertNotIn("--rc-no-auth", cmd)
         self.assertNotIn(p.secret_key, cmd)
 
+    def test_legacy_service_command_detection_is_strict(self):
+        from windows_service import service_command_requires_update
+        self.assertTrue(service_command_requires_update(
+            "rclone.exe mount remote: S: --log-level INFO --stats 2s"
+        ))
+        self.assertTrue(service_command_requires_update(
+            "rclone.exe mount remote: S: --log-level ERROR --stats-log-level INFO"
+        ))
+        self.assertFalse(service_command_requires_update(
+            "rclone.exe mount remote: S: --log-level ERROR --use-json-log"
+        ))
+
+    def test_stopped_service_can_read_installed_command_without_admin(self):
+        from windows_service import service_logging_needs_update
+        from unittest.mock import Mock
+        service = Mock()
+        service.SC_MANAGER_CONNECT = 1
+        service.SERVICE_QUERY_CONFIG = 2
+        service.OpenSCManager.return_value = "scm"
+        service.OpenService.return_value = "svc"
+        service.QueryServiceConfig.return_value = (
+            None, None, None, 'rclone.exe --log-level INFO --stats 2s'
+        )
+        with patch.dict("sys.modules", {"win32service": service}):
+            self.assertTrue(service_logging_needs_update(sample().id))
+        service.OpenService.assert_called_once()
+        self.assertEqual(service.OpenService.call_args.args[-1], 2)
+        self.assertEqual(service.CloseServiceHandle.call_count, 2)
+
     def test_monitor_log_is_read_only_for_interactive_users(self):
         import os
         if os.name != "nt":

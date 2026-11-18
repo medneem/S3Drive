@@ -98,6 +98,117 @@ class StorageUsageTests(unittest.TestCase):
                         clear_user_log(first.id)
                     self.assertTrue(other.exists())
 
+    def test_active_user_log_is_truncated_not_unlinked(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            first, second = profile(), profile()
+            logs = root / "logs"
+            logs.mkdir()
+            chosen = logs / (first.id + ".log")
+            other = logs / (second.id + ".log")
+            chosen.write_bytes(b"old data")
+            other.write_bytes(b"other")
+            with patch("maintenance.app_data_dir", return_value=root):
+                self.assertTrue(clear_user_log(first.id, running=True))
+            self.assertTrue(chosen.exists())
+            self.assertEqual(chosen.stat().st_size, 0)
+            self.assertEqual(other.read_bytes(), b"other")
+
+    def test_active_log_blocked_file_keeps_original_data(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            logs = root / "logs"
+            logs.mkdir()
+            p = profile()
+            chosen = logs / (p.id + ".log")
+            chosen.write_bytes(b"pending diagnostic")
+            with patch("maintenance.app_data_dir", return_value=root), \
+                 patch("pathlib.Path.open", side_effect=PermissionError("file is locked")):
+                with self.assertRaisesRegex(PermissionError, "locked"):
+                    clear_user_log(p.id, running=True)
+            self.assertEqual(chosen.read_bytes(), b"pending diagnostic")
+
+    def test_active_log_symlink_does_not_truncate_external_target(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            logs = root / "logs"
+            logs.mkdir()
+            p = profile()
+            target = root / "external.txt"
+            target.write_text("keep me", encoding="utf-8")
+            chosen = logs / (p.id + ".log")
+            try:
+                chosen.symlink_to(target)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks are not available")
+            with patch("maintenance.app_data_dir", return_value=root):
+                with self.assertRaises(RuntimeError):
+                    clear_user_log(p.id, running=True)
+            self.assertEqual(target.read_text(encoding="utf-8"), "keep me")
+
+    def test_gui_clear_logs_for_running_user_mount(self):
+        from unittest.mock import Mock
+        from PySide6.QtWidgets import QMessageBox as QtMessageBox
+        from main import MainWindow
+        p = profile()
+        ui = SimpleNamespace(mounts=SimpleNamespace(is_mounted=lambda _id: True),
+                             selected_profile=lambda: p)
+        with patch("main.service_status", return_value=None), \
+             patch("main.QMessageBox.question",
+                   return_value=QtMessageBox.StandardButton.Yes), \
+             patch("main.QMessageBox.information"), \
+             patch("main.clear_user_log", return_value=True) as clear:
+            self.assertTrue(MainWindow.clear_logs_profile(ui, profile=p))
+            clear.assert_called_once_with(p.id, running=True)
+
+    def test_gui_clear_logs_for_running_windows_service(self):
+        from unittest.mock import Mock
+        from PySide6.QtWidgets import QMessageBox as QtMessageBox
+        from main import MainWindow
+        from windows_service import SERVICE_RUNNING
+        p = profile(service=True)
+        ui = SimpleNamespace(mounts=SimpleNamespace(is_mounted=lambda _id: False),
+                             selected_profile=lambda: p)
+        with patch("main.service_status", return_value=SERVICE_RUNNING), \
+             patch("main.QMessageBox.question",
+                   return_value=QtMessageBox.StandardButton.Yes), \
+             patch("main.QMessageBox.information"), \
+             patch("main.run_admin") as elevated:
+            self.assertTrue(MainWindow.clear_logs_profile(ui, profile=p))
+            elevated.assert_called_once_with("clear-logs", p.id)
+
+    def test_gui_enables_clear_logs_for_active_mount(self):
+        import inspect
+        from main import MainWindow
+        code = inspect.getsource(MainWindow.open_settings)
+        self.assertNotIn("clear_logs.setEnabled(not active", code)
+        self.assertIn("clear_logs.setEnabled(service in (None, SERVICE_STOPPED, SERVICE_RUNNING))", code)
+
+    def test_settings_show_separate_windows_service_log_location(self):
+        import inspect
+        from main import MainWindow
+        src = inspect.getsource(MainWindow.open_settings)
+        self.assertIn('tr("Каталог журналов Windows-служб:")', src)
+        self.assertIn('tr("Журнал выбранного подключения:")', src)
+        self.assertIn("service_logs_root()", src)
+        self.assertIn("profile_log_path(profile)", src)
+        handler = inspect.getsource(MainWindow.open_settings_location)
+        self.assertIn('destination == "services"', handler)
+        self.assertIn('destination == "selected-log"', handler)
+
+    def test_settings_open_selected_service_log_file_directly(self):
+        from unittest.mock import Mock
+        from main import MainWindow
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / "rclone.log"
+            log.write_text("line", encoding="utf-8")
+            p = profile(service=True)
+            ui = SimpleNamespace(selected_profile=lambda: p)
+            with patch("main.profile_log_path", return_value=log), \
+                 patch("main.os.startfile", create=True) as opener:
+                MainWindow.open_settings_location(ui, "selected-log")
+                opener.assert_called_once_with(str(log))
+
     def test_size_formatting_supports_both_languages_and_missing_data(self):
         from localization import set_language
         try:
@@ -117,8 +228,8 @@ class StorageUsageTests(unittest.TestCase):
         settings = inspect.getsource(MainWindow.open_settings)
         self.assertNotIn("self.open_logs_button", init)
         self.assertNotIn("self.clear_cache_button", init)
-        self.assertIn("self.statusBar().hide()", init)
-        self.assertIn("self.statusBar().show()", inspect.getsource(MainWindow.on_transfers))
+        self.assertNotIn("self.statusBar()", init)
+        self.assertNotIn("self.statusBar()", inspect.getsource(MainWindow.on_transfers))
         self.assertIn("Очистить кэш", settings)
         self.assertIn("Очистить логи", settings)
         self.assertIn("Общий размер кэша", settings)

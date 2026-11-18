@@ -139,23 +139,24 @@ class NewProfileDefaultsTests(unittest.TestCase):
         self.assertNotIn("self.hide()", inspect.getsource(desktop.MainWindow.closeEvent))
         self.assertIn("self.hide_transfer_popup()", inspect.getsource(desktop.MainWindow.closeEvent))
 
-    def test_monitor_checks_running_service_even_if_other_profile_is_selected(self):
+    def test_monitor_skips_services_and_polls_only_user_mounts(self):
         from main import MainWindow
         from types import SimpleNamespace
         from unittest.mock import Mock, patch
-        other = SimpleNamespace(id="other", service_mode=True)
-        running = SimpleNamespace(id="running", service_mode=True)
+        service = SimpleNamespace(id="service", service_mode=True)
+        ordinary = SimpleNamespace(id="ordinary", service_mode=False)
         ui = SimpleNamespace(
-            monitor_pending=False, profiles=[other, running],
+            monitor_pending=False, profiles=[service, ordinary],
             mounts=Mock(), transfer_popup_profile=None, transfer_popup=None,
             monitor_index=0, on_transfers=Mock(),
         )
-        with patch("main.service_status",
-                   side_effect=lambda pid: 4 if pid == "running" else 1):
-            with patch("main._MonitorTask") as task:
-                with patch("main.QThreadPool.globalInstance") as pool:
-                    MainWindow.poll_transfers(ui)
-        task.assert_called_once_with(running, ui.mounts)
+        ui.mounts.is_mounted.return_value = True
+        with patch("main.service_status") as status, \
+             patch("main._MonitorTask") as task, \
+             patch("main.QThreadPool.globalInstance") as pool:
+            MainWindow.poll_transfers(ui)
+        status.assert_not_called()
+        task.assert_called_once_with(ordinary, ui.mounts)
         pool.return_value.start.assert_called_once_with(task.return_value)
         self.assertTrue(ui.monitor_pending)
 

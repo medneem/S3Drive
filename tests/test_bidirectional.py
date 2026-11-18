@@ -5,7 +5,6 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from log_access import TransferErrorNotices
 from transfer_monitor import (
     TransferItem, parse_snapshot, parse_service_stats, latest_service_stats,
 )
@@ -135,7 +134,6 @@ class TransferDialogTests(unittest.TestCase):
         })
         ui = SimpleNamespace(
             monitor_pending=True, profiles=[profile], monitor_last_error="",
-            error_notices=TransferErrorNotices(), _hide_transfer_error=Mock(),
             idle_polls=1, uploads_seen=set(), dismissed_uploads=set(),
             transfer_popup=None, transfer_popup_profile=None,
             hide_transfer_popup=Mock(), _status_notice=Mock(),
@@ -160,7 +158,6 @@ class TransferDialogTests(unittest.TestCase):
         })
         ui = SimpleNamespace(
             monitor_pending=True, profiles=[profile], monitor_last_error="",
-            error_notices=TransferErrorNotices(), _hide_transfer_error=Mock(),
             idle_polls=1, uploads_seen={profile.id}, dismissed_uploads=set(),
             transfer_popup=Mock(), transfer_popup_profile=profile.id,
             hide_transfer_popup=Mock(), _status_notice=Mock(),
@@ -185,7 +182,6 @@ class TransferDialogTests(unittest.TestCase):
         })
         ui = SimpleNamespace(
             monitor_pending=True, profiles=[profile], monitor_last_error="",
-            error_notices=TransferErrorNotices(), _hide_transfer_error=Mock(),
             idle_polls=0, uploads_seen=set(), dismissed_uploads=set(),
             transfer_popup=None, transfer_popup_profile=None,
             hide_transfer_popup=Mock(), _status_notice=Mock(),
@@ -234,7 +230,6 @@ class TransferDialogTests(unittest.TestCase):
         }, {"transferring": [{"name": "up.zip", "size": 1000, "bytes": 300}]})
         ui = SimpleNamespace(
             monitor_pending=True, profiles=[profile], monitor_last_error="",
-            error_notices=TransferErrorNotices(), _hide_transfer_error=Mock(),
             idle_polls=0, uploads_seen=set(), dismissed_uploads=set(),
             transfer_popup=None, transfer_popup_profile=None,
             dismiss_current_transfer=Mock(),

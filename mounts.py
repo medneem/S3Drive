@@ -75,7 +75,7 @@ def mount_command(profile: Profile, executable: str, cache_dir: Path, port: int)
         # native FUSE option bypasses that lossy rclone function.
         "--option", "volname=" + profile.name,
         "--rc", "--rc-addr", f"127.0.0.1:{port}",
-        "--log-level", "INFO",
+        "--log-level", "ERROR",
     ]
 
 

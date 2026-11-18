@@ -123,8 +123,19 @@ def format_total(value: int, incomplete: bool) -> str:
     return tr("{size} (неполный)", size=readable) if incomplete else readable
 
 
-def clear_log_file(path: Path) -> bool:
-    """Delete exactly one stopped mount's log; never touch links or folders."""
+def service_logs_root() -> Path:
+    """Services keep their logs in ProgramData, not the user's LocalAppData."""
+    return Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "S3Drive" / "services"
+
+
+def clear_log_file(path: Path, *, running: bool = False) -> bool:
+    """Clear exactly one log, retaining the file handle of a running rclone.
+
+    Windows cannot always remove an opened file. For active mounts we use
+    in-place truncation instead of unlinking: rclone continues logging through
+    the same handle. If Windows denies concurrent writing, propagate the
+    exception and do not delete the file or stop the connection.
+    """
     path = Path(path)
     try:
         meta = path.lstat()
@@ -132,13 +143,22 @@ def clear_log_file(path: Path) -> bool:
         return False
     if _is_link(meta) or not stat.S_ISREG(meta.st_mode):
         raise RuntimeError("Небезопасный путь журнала. Очистка отменена.")
+    if running:
+        with path.open("r+b") as handle:
+            opened = os.fstat(handle.fileno())
+            if not stat.S_ISREG(opened.st_mode) or (
+                (opened.st_dev, opened.st_ino) != (meta.st_dev, meta.st_ino)
+            ):
+                raise RuntimeError("Журнал изменился во время открытия. Очистка отменена.")
+            handle.truncate(0)
+        return True
     path.unlink()
     return True
 
 
-def clear_user_log(profile_id: str) -> bool:
-    """GUI must check that the user mount is stopped before calling this."""
+def clear_user_log(profile_id: str, *, running: bool = False) -> bool:
+    """Keep the original log file when a user rclone mount is still running."""
     canonical = str(uuid.UUID(profile_id))
     if canonical != profile_id:
         raise ValueError("Некорректный идентификатор подключения (UUID).")
-    return clear_log_file(app_data_dir() / "logs" / (canonical + ".log"))
+    return clear_log_file(app_data_dir() / "logs" / (canonical + ".log"), running=running)

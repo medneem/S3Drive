@@ -48,6 +48,32 @@ def service_status(profile_id: str) -> int | None:
         raise
 
 
+def service_command_requires_update(command: str) -> bool:
+    """Old installations still carry INFO/stats flags in SCM BinPath."""
+    import re
+    return (not re.search(r'--log-level(?:=|[ \t]+)ERROR(?:[ \t]|$)', command)
+            or re.search(r'--stats(?:=|[ \t])', command) is not None
+            or '--stats-log-level' in command)
+
+
+def service_logging_needs_update(profile_id: str) -> bool:
+    """Inspect installed SCM command without stopping or modifying the service."""
+    import win32service
+
+    scm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_CONNECT)
+    try:
+        service = win32service.OpenService(
+            scm, service_name(profile_id), win32service.SERVICE_QUERY_CONFIG
+        )
+        try:
+            command = win32service.QueryServiceConfig(service)[3]
+        finally:
+            win32service.CloseServiceHandle(service)
+    finally:
+        win32service.CloseServiceHandle(scm)
+    return service_command_requires_update(command)
+
+
 def service_dir(profile_id: str) -> Path:
     if os.name != "nt":
         raise OSError("Службы поддерживаются только в Windows.")
@@ -222,9 +248,9 @@ def service_command(profile, rclone: Path, config: Path, cache: Path,
         # Remove S3 "folder/" marker objects when Explorer removes a directory.
         # Without this flag S3 backend Rmdir leaves the marker behind.
         "--s3-directory-markers",
-        "--cache-dir", str(cache), "--log-file", str(log), "--log-level", "INFO",
-        # JSONL содержит machine-readable core/stats. Без доступа к RC-паролю.
-        "--use-json-log", "--stats", "2s", "--stats-log-level", "INFO",
+        # Only diagnostic errors, no periodic INFO/statistics output.
+        "--cache-dir", str(cache), "--log-file", str(log), "--log-level", "ERROR",
+        "--use-json-log",
         # rclone v1.75.2 SetVolumeName uses len(vol) > 32, i.e. UTF-8 BYTES,
         # and slices the name before WinFsp receives it. Passing the
         # native FUSE option bypasses that lossy rclone function.
@@ -573,15 +599,17 @@ def clear_service_cache(profile_id: str) -> bool:
 
 
 def clear_service_log(profile_id: str) -> bool:
-    """Elevated, targeted cleanup; never remove a log from a running service."""
+    """Clean just this service log, keeping a running rclone's handle alive."""
     import uuid
     from maintenance import clear_log_file
 
     uuid.UUID(profile_id)
     state = service_status(profile_id)
-    if state not in (None, SERVICE_STOPPED):
-        raise RuntimeError("Остановите службу перед очисткой журналов.")
-    return clear_log_file(service_dir(profile_id) / "rclone.log")
+    if state not in (None, SERVICE_STOPPED, SERVICE_RUNNING):
+        raise RuntimeError("Дождитесь завершения изменения состояния службы.")
+    return clear_log_file(
+        service_dir(profile_id) / "rclone.log", running=state == SERVICE_RUNNING
+    )
 
 
 def remove_service(profile_id: str) -> None:
@@ -597,3 +625,25 @@ def remove_service(profile_id: str) -> None:
     (service_dir(profile_id) / "owner.json").unlink(missing_ok=True)
     # Keep the old VFS cache and log for recovery/debugging; credentials remain
     # protected under ProgramData and are not silently discarded.
+
+
+def delete_service_profile_data(profile_id: str) -> bool:
+    """Explicit user-approved removal of one SCM service and its private files.
+
+    Running mounts must pass the VFS pending/failed-write checks before
+    stopping. Never delete an active service or its cache if checks fail.
+    This function is invoked through the elevated helper, after the GUI's
+    destructive confirmation; it does not touch other service folders.
+    """
+    uuid.UUID(profile_id)
+    state = service_status(profile_id)
+    if state == SERVICE_RUNNING:
+        # Validates VFS idle, safely stops rclone and clears its VFS cache.
+        clear_service_cache(profile_id)
+        state = service_status(profile_id)
+    if state not in (None, SERVICE_STOPPED):
+        raise RuntimeError("Служба не остановлена. Данные профиля не удалены.")
+    if state == SERVICE_STOPPED:
+        remove_service(profile_id)
+    root = service_dir(profile_id)
+    return erase_cache_directory(root, parent=root.parent)

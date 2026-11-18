@@ -14,7 +14,7 @@ from profiles import ProfileStore, config_path, s3_mount_root
 from service_control import enroll_profile, validate_owner_sid
 from service_control_installer import install_control_service
 from windows_service import (
-    clear_service_cache, clear_service_log, install_and_start, remove_service, service_dir,
+    clear_service_cache, clear_service_log, delete_service_profile_data, install_and_start, remove_service, service_dir,
     service_status, stop_service,
 )
 
@@ -69,6 +69,8 @@ def run_action(action: str, profile_id: str, owner_sid: str | None = None) -> No
         clear_service_cache(profile_id)
     elif action == "clear-logs":
         clear_service_log(profile_id)
+    elif action == "delete-profile-data":
+        delete_service_profile_data(profile_id)
     else:
         raise ValueError("Недопустимое действие службы.")
 
@@ -90,7 +92,7 @@ def main() -> int:
     try:
         if len(sys.argv) not in (3, 4):
             raise ValueError(
-                "Использование: S3DriveAdmin.exe install|setup-control|repair-control|stop|remove|clear-cache|clear-logs <profile-id> [owner-SID]"
+                "Использование: S3DriveAdmin.exe install|setup-control|repair-control|stop|remove|clear-cache|clear-logs|delete-profile-data <profile-id> [owner-SID]"
             )
         action = sys.argv[1]
         if (action in ("install", "setup-control")) != (len(sys.argv) == 4):

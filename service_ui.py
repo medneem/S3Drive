@@ -14,7 +14,7 @@ def helper_executable() -> Path:
 
 def run_admin(action: str, profile_id: str, wait_ms: int = 90000) -> None:
     """An explicit GUI click is required before calling this function."""
-    if action not in ("install", "setup-control", "repair-control", "stop", "remove", "clear-cache", "clear-logs"):
+    if action not in ("install", "setup-control", "repair-control", "stop", "remove", "clear-cache", "clear-logs", "delete-profile-data"):
         raise ValueError("Недопустимое действие службы.")
     import uuid
     uuid.UUID(profile_id)

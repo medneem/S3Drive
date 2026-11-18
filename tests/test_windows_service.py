@@ -55,10 +55,41 @@ class ServiceTests(unittest.TestCase):
             45999,
         )
         self.assertIn("--use-json-log", cmd)
-        self.assertIn("--stats 2s", cmd)
+        self.assertIn("--log-level ERROR", cmd)
+        self.assertNotIn("--stats 2s", cmd)
+        self.assertNotIn("--stats-log-level", cmd)
         self.assertIn("--rc-htpasswd", cmd)
         self.assertNotIn("--rc-no-auth", cmd)
         self.assertNotIn(p.secret_key, cmd)
+
+    def test_legacy_service_command_detection_is_strict(self):
+        from windows_service import service_command_requires_update
+        self.assertTrue(service_command_requires_update(
+            "rclone.exe mount remote: S: --log-level INFO --stats 2s"
+        ))
+        self.assertTrue(service_command_requires_update(
+            "rclone.exe mount remote: S: --log-level ERROR --stats-log-level INFO"
+        ))
+        self.assertFalse(service_command_requires_update(
+            "rclone.exe mount remote: S: --log-level ERROR --use-json-log"
+        ))
+
+    def test_stopped_service_can_read_installed_command_without_admin(self):
+        from windows_service import service_logging_needs_update
+        from unittest.mock import Mock
+        service = Mock()
+        service.SC_MANAGER_CONNECT = 1
+        service.SERVICE_QUERY_CONFIG = 2
+        service.OpenSCManager.return_value = "scm"
+        service.OpenService.return_value = "svc"
+        service.QueryServiceConfig.return_value = (
+            None, None, None, 'rclone.exe --log-level INFO --stats 2s'
+        )
+        with patch.dict("sys.modules", {"win32service": service}):
+            self.assertTrue(service_logging_needs_update(sample().id))
+        service.OpenService.assert_called_once()
+        self.assertEqual(service.OpenService.call_args.args[-1], 2)
+        self.assertEqual(service.CloseServiceHandle.call_count, 2)
 
     def test_monitor_log_is_read_only_for_interactive_users(self):
         import os
@@ -518,17 +549,33 @@ class ServiceTests(unittest.TestCase):
         }):
             ensure_vfs_idle({"port": 42, "password": "pw"})
 
-    def test_log_cleanup_refuses_running_service_and_preserves_log(self):
+    def test_log_cleanup_truncates_running_service_log_and_preserves_control(self):
         from windows_service import clear_service_log
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             logfile = root / "rclone.log"
             logfile.write_text("active", encoding="utf-8")
+            control = root / "control.json"
+            control.write_text("credentials", encoding="utf-8")
             with patch("windows_service.service_dir", return_value=root), \
                  patch("windows_service.service_status", return_value=SERVICE_RUNNING):
-                with self.assertRaisesRegex(RuntimeError, "Остановите службу"):
+                self.assertTrue(clear_service_log(sample().id))
+            self.assertTrue(logfile.exists())
+            self.assertEqual(logfile.read_bytes(), b"")
+            self.assertEqual(control.read_text(encoding="utf-8"), "credentials")
+
+    def test_log_cleanup_when_service_file_locked_reports_error(self):
+        from windows_service import clear_service_log
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            logfile = root / "rclone.log"
+            logfile.write_bytes(b"active")
+            with patch("windows_service.service_dir", return_value=root), \
+                 patch("windows_service.service_status", return_value=SERVICE_RUNNING), \
+                 patch("pathlib.Path.open", side_effect=PermissionError("locked")):
+                with self.assertRaises(PermissionError):
                     clear_service_log(sample().id)
-            self.assertEqual(logfile.read_text(encoding="utf-8"), "active")
+            self.assertEqual(logfile.read_bytes(), b"active")
 
     def test_log_cleanup_deletes_only_stopped_service_log(self):
         from windows_service import clear_service_log

@@ -25,6 +25,74 @@ class NewProfileDefaultsTests(unittest.TestCase):
         gui.background_checkbox.setChecked.assert_called_once_with(False)
         gui.service_checkbox.setChecked.assert_called_once_with(True)
 
+    @staticmethod
+    def window_for_bucket_save(bucket, *, service_mode=False):
+        """Exercise real GUI Save logic without displaying a Qt window."""
+        from unittest.mock import Mock
+        from types import SimpleNamespace
+        p = new_profile(
+            name="SILO", endpoint="http://localhost:9010", bucket=bucket,
+            access_key="key", secret_key="secret", drive="M:",
+            service_mode=service_mode,
+        )
+        ui = SimpleNamespace(
+            settings_load_error=False, draft=Mock(return_value=p),
+            profiles=[], mounts=Mock(), store=Mock(),
+            bucket=Mock(), refresh_items=Mock(), status=Mock(),
+            pending_mounts={}, update_status=Mock(),
+        )
+        ui.mounts.is_mounted.return_value = False
+        ui.save_profile = lambda: MainWindow.save_profile(ui)
+        ui.selected_profile = lambda: ui.profiles[0] if ui.profiles else None
+        return ui, p
+
+    def test_save_normalizes_nested_path_in_config_and_visible_bucket_field(self):
+        from unittest.mock import patch
+        for source in ("users/medneem", "/users/medneem",
+                       "/users/medneem/", "users/medneem/"):
+            with self.subTest(source=source):
+                ui, p = self.window_for_bucket_save(source)
+                with patch("main.service_status", return_value=None):
+                    self.assertTrue(MainWindow.save_profile(ui))
+                expected = source if source.endswith("/") else source + "/"
+                self.assertEqual(p.bucket, expected)
+                self.assertEqual(ui.profiles[0].bucket, expected)
+                ui.store.save.assert_called_once()
+                self.assertEqual(ui.store.save.call_args.args[0][0].bucket, expected)
+                ui.bucket.setText.assert_called_once_with(expected)
+
+    def test_save_does_not_add_slash_to_bucket_only_or_empty_path(self):
+        from unittest.mock import patch
+        for source in ("users", "", "/users"):
+            with self.subTest(source=source):
+                ui, p = self.window_for_bucket_save(source)
+                with patch("main.service_status", return_value=None):
+                    self.assertTrue(MainWindow.save_profile(ui))
+                self.assertEqual(ui.profiles[0].bucket, source)
+                ui.bucket.setText.assert_called_once_with(source)
+
+    def test_connect_normalizes_nested_path_before_mount(self):
+        from unittest.mock import patch
+        for service in (False, True):
+            with self.subTest(service=service):
+                ui, p = self.window_for_bucket_save("users/medneem", service_mode=service)
+                with patch("main.service_status", return_value=None), \
+                     patch("main.winfsp_installed", return_value=True), \
+                     patch("main.run_admin") as admin, \
+                     patch("main.notify_explorer"), \
+                     patch("main.QMessageBox.warning") as warning:
+                    MainWindow.mount_profile(ui)
+                self.assertEqual(ui.profiles[0].bucket, "users/medneem/")
+                ui.bucket.setText.assert_called_once_with("users/medneem/")
+                ui.store.save.assert_called_once()
+                warning.assert_not_called()
+                if service:
+                    admin.assert_called_once_with("install", p.id)
+                    ui.mounts.start.assert_not_called()
+                else:
+                    ui.mounts.start.assert_called_once_with(p)
+                    admin.assert_not_called()
+
     def test_loading_saved_profile_preserves_existing_checkbox_choices(self):
         p = new_profile(
             name="Existing", endpoint="http://nas.local:8010", bucket="backup",

@@ -84,6 +84,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Failed to patch expected upstream rclone sources" }
           go -C rclone-source fmt ./cmd/cmount
           if ($LASTEXITCODE -ne 0) { throw "Go fmt failed" }
+          # WinFsp cgofuse supports native Windows mounting without CGo;
+          # avoid requiring the optional WinFsp Developer headers in CI.
+          $env:CGO_ENABLED = "0"
           go -C rclone-source build -tags cmount -trimpath -o ../tools/rclone.exe .
           if ($LASTEXITCODE -ne 0) { throw "Experimental rclone build failed" }
           & ./tools/rclone.exe version

@@ -122,7 +122,7 @@ class StorageUsageTests(unittest.TestCase):
             p = profile()
             chosen = logs / (p.id + ".log")
             chosen.write_bytes(b"pending diagnostic")
-            with patch("maintenance.app_data_dir", return_value=root), \\
+            with patch("maintenance.app_data_dir", return_value=root), \
                  patch("pathlib.Path.open", side_effect=PermissionError("file is locked")):
                 with self.assertRaisesRegex(PermissionError, "locked"):
                     clear_user_log(p.id, running=True)
@@ -153,10 +153,10 @@ class StorageUsageTests(unittest.TestCase):
         p = profile()
         ui = SimpleNamespace(mounts=SimpleNamespace(is_mounted=lambda _id: True),
                              selected_profile=lambda: p)
-        with patch("main.service_status", return_value=None), \\
+        with patch("main.service_status", return_value=None), \
              patch("main.QMessageBox.question",
-                   return_value=QtMessageBox.StandardButton.Yes), \\
-             patch("main.QMessageBox.information"), \\
+                   return_value=QtMessageBox.StandardButton.Yes), \
+             patch("main.QMessageBox.information"), \
              patch("main.clear_user_log", return_value=True) as clear:
             self.assertTrue(MainWindow.clear_logs_profile(ui, profile=p))
             clear.assert_called_once_with(p.id, running=True)
@@ -169,10 +169,10 @@ class StorageUsageTests(unittest.TestCase):
         p = profile(service=True)
         ui = SimpleNamespace(mounts=SimpleNamespace(is_mounted=lambda _id: False),
                              selected_profile=lambda: p)
-        with patch("main.service_status", return_value=SERVICE_RUNNING), \\
+        with patch("main.service_status", return_value=SERVICE_RUNNING), \
              patch("main.QMessageBox.question",
-                   return_value=QtMessageBox.StandardButton.Yes), \\
-             patch("main.QMessageBox.information"), \\
+                   return_value=QtMessageBox.StandardButton.Yes), \
+             patch("main.QMessageBox.information"), \
              patch("main.run_admin") as elevated:
             self.assertTrue(MainWindow.clear_logs_profile(ui, profile=p))
             elevated.assert_called_once_with("clear-logs", p.id)

@@ -138,7 +138,7 @@ class TransferDialogTests(unittest.TestCase):
             error_notices=TransferErrorNotices(), _hide_transfer_error=Mock(),
             idle_polls=1, uploads_seen=set(), dismissed_uploads=set(),
             transfer_popup=None, transfer_popup_profile=None,
-            hide_transfer_popup=Mock(), statusBar=Mock(),
+            hide_transfer_popup=Mock(), _status_notice=Mock(),
         )
         with patch("main.TransferWindow") as dialog:
             MainWindow.on_transfers(ui, profile.id, state, "")
@@ -163,7 +163,7 @@ class TransferDialogTests(unittest.TestCase):
             error_notices=TransferErrorNotices(), _hide_transfer_error=Mock(),
             idle_polls=1, uploads_seen={profile.id}, dismissed_uploads=set(),
             transfer_popup=Mock(), transfer_popup_profile=profile.id,
-            hide_transfer_popup=Mock(), statusBar=Mock(),
+            hide_transfer_popup=Mock(), _status_notice=Mock(),
         )
         with patch("main.TransferWindow") as dialog:
             MainWindow.on_transfers(ui, profile.id, state, "")
@@ -188,7 +188,7 @@ class TransferDialogTests(unittest.TestCase):
             error_notices=TransferErrorNotices(), _hide_transfer_error=Mock(),
             idle_polls=0, uploads_seen=set(), dismissed_uploads=set(),
             transfer_popup=None, transfer_popup_profile=None,
-            hide_transfer_popup=Mock(), statusBar=Mock(),
+            hide_transfer_popup=Mock(), _status_notice=Mock(),
         )
         with patch("main.TransferWindow") as dialog:
             MainWindow.on_transfers(ui, profile.id, state, "")

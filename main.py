@@ -37,10 +37,10 @@ from profiles import Profile, ProfileStore, app_data_dir, config_path, normalize
 from version import APP_VERSION
 from auto_update import (UpdateInfo, StagedUpdate, check_latest_release,
                          stage_update, discard_update, launch_updater)
-from transfer_monitor import read_user_snapshot, read_service_snapshot, TransferSnapshot
+from transfer_monitor import read_user_snapshot, TransferSnapshot
 from legacy_startup import remove_legacy_tray_autostart
 from localization import tr, set_language, get_language, read_language
-from log_access import TransferErrorNotices, profile_log_path
+from log_access import profile_log_path
 from maintenance import StorageUsage, storage_usage, format_size, format_total, clear_user_log, service_logs_root
 from cache_ops import erase_cache_directory
 
@@ -94,10 +94,7 @@ class _MonitorTask(QRunnable):
 
     def run(self):
         try:
-            if self.profile.service_mode:
-                state = read_service_snapshot(self.profile.id)
-            else:
-                state = read_user_snapshot(self.manager, self.profile.id)
+            state = read_user_snapshot(self.manager, self.profile.id)
             self.signals.finished.emit(self.profile.id, state, "")
         except Exception as exc:
             self.signals.finished.emit(self.profile.id, None, str(exc))
@@ -231,8 +228,8 @@ class TransferWindow(QDialog):
         items = tuple(item for item in snapshot.transfers
                       if item.direction in ("upload", "queued"))
         self.summary.setText(
-            tr("На S3: {count}   |   В очереди: {queued}", count=snapshot.uploading, queued=snapshot.queued)
-            + (tr("   |   Ошибки: {count}", count=snapshot.errors) if snapshot.errors else "")
+            tr("На S3: {count}   |   В очереди: {queued}",
+               count=snapshot.uploading, queued=snapshot.queued)
         )
         self.table.setRowCount(len(items))
         for row, item in enumerate(items):
@@ -407,15 +404,6 @@ class MainWindow(QMainWindow):
         self.mount_button.clicked.connect(self.mount_profile)
         self.unmount_button.clicked.connect(self.unmount_profile)
         self.remove_service_button.clicked.connect(self.remove_service_profile)
-        self.error_notices = TransferErrorNotices()
-        self.transfer_error_profile_id: str | None = None
-        self.transfer_error_link = QLabel()
-        self.transfer_error_link.setTextFormat(Qt.TextFormat.RichText)
-        self.transfer_error_link.setOpenExternalLinks(False)
-        self.transfer_error_link.linkActivated.connect(self.open_transfer_error_logs)
-        self.statusBar().addWidget(self.transfer_error_link)
-        self.transfer_error_link.hide()
-        self.statusBar().hide()
         self.retranslate_ui()
         self.pending_mounts: dict[str, tuple[Profile, float]] = {}
         self.refresh_items()
@@ -444,7 +432,6 @@ class MainWindow(QMainWindow):
         self.transfer_popup: TransferWindow | None = None
         self.transfer_popup_profile: str | None = None
         self.idle_polls = 0
-        self.monitor_last_error = ""
         self.monitor_timer = QTimer(self)
         self.monitor_timer.timeout.connect(self.poll_transfers)
         self.monitor_timer.start(1500)
@@ -460,11 +447,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self.check_release_on_startup)
 
     def _status_notice(self, message: str, _timeout: int = 0) -> None:
-        """Keep transient messages in the existing connection-status area.
-
-        The bottom QStatusBar is reserved exclusively for a clickable rclone
-        error; do not make it visible for progress or informational messages.
-        """
+        """Show ordinary connection/progress messages inside the main form."""
         self.status.setText(message)
 
     def retranslate_ui(self) -> None:
@@ -505,9 +488,6 @@ class MainWindow(QMainWindow):
             (self.remove_service_button, "Удалить службу"),
         ):
             button.setText(tr(caption))
-        self.transfer_error_link.setText(
-            '<a href="open-log">' + tr("Ошибки передачи — открыть журнал rclone") + '</a>'
-        )
         self.unmount_button.setText(tr("Отключить"))
         self.update_status()
         if self.selected_profile() is None:
@@ -1394,12 +1374,11 @@ class MainWindow(QMainWindow):
     def poll_transfers(self):
         if self.monitor_pending:
             return
-        # Мониторить все работающие диски, а не только выделенную запись:
-        # при скрытом окне выбранный профиль может вообще не быть активным.
+        # Poll only user mounts through authenticated RC. LocalSystem service
+        # logs are ERROR-only; no periodic INFO/statistics are written.
         active_profiles = [
             p for p in self.profiles
-            if (service_status(p.id) == SERVICE_RUNNING
-                if p.service_mode else self.mounts.is_mounted(p.id))
+            if not p.service_mode and self.mounts.is_mounted(p.id)
         ]
         if not active_profiles:
             self.hide_transfer_popup()
@@ -1420,58 +1399,12 @@ class MainWindow(QMainWindow):
         task.signals.finished.connect(self.on_transfers)
         QThreadPool.globalInstance().start(task)
 
-    def _hide_transfer_error(self, profile_id: str) -> None:
-        if self.transfer_error_profile_id == profile_id:
-            self.transfer_error_profile_id = None
-            self.transfer_error_link.hide()
-            self.statusBar().hide()
-
-    def _open_profile_logs(self, profile: Profile) -> bool:
-        """Open a directory for user mounts, or the readable service log itself.
-
-        LocalSystem service folders have a restricted ACL: opening their
-        directories in Explorer would fail for a normal user.
-        """
-        try:
-            path = profile_log_path(profile)
-            if profile.service_mode:
-                if not path.is_file():
-                    raise FileNotFoundError(tr("Журнал службы ещё не создан."))
-                os.startfile(str(path))
-            else:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                os.startfile(str(path.parent))
-            return True
-        except OSError as exc:
-            QMessageBox.warning(self, "Не удалось открыть журнал", str(exc))
-            return False
-
-    def open_transfer_error_logs(self, _href: str = "") -> None:
-        profile_id = self.transfer_error_profile_id
-        profile = next((p for p in self.profiles if p.id == profile_id), None)
-        if profile is None:
-            return
-        if self._open_profile_logs(profile):
-            self.error_notices.acknowledge(profile.id)
-            self._hide_transfer_error(profile.id)
-
     def on_transfers(self, profile_id: str, snapshot: TransferSnapshot | None, error: str):
+        """Progress only for ordinary mounts; never display error notifications."""
         self.monitor_pending = False
         profile = next((p for p in self.profiles if p.id == profile_id), None)
-        if profile is None:
+        if profile is None or profile.service_mode or snapshot is None:
             return
-        if snapshot is None:
-            if error != self.monitor_last_error:
-                self.monitor_last_error = error
-                self._status_notice(tr("Монитор загрузок: {error}", error=error[:170]), 12000)
-            # Недостоверная статистика не должна скрывать уже открытую передачу.
-            return
-        self.monitor_last_error = ""
-        if not snapshot.errors:
-            self.error_notices.observe(profile_id, 0)
-            self._hide_transfer_error(profile_id)
-        # Show our window for confirmed VFS uploads only. Windows Explorer
-        # already owns the UI for downloads from the mounted drive.
         transferring = snapshot.has_upload_activity
         if transferring:
             self.idle_polls = 0
@@ -1490,13 +1423,7 @@ class MainWindow(QMainWindow):
                 return
             self.hide_transfer_popup()
             self.dismissed_uploads.discard(profile_id)
-            if snapshot.errors:
-                if self.error_notices.observe(profile_id, snapshot.errors):
-                    self.transfer_error_profile_id = profile_id
-                    self.statusBar().clearMessage()
-                    self.transfer_error_link.show()
-                    self.statusBar().show()
-            elif profile_id in self.uploads_seen:
+            if profile_id in self.uploads_seen:
                 self.uploads_seen.discard(profile_id)
                 self._status_notice(tr("S3Drive: загрузка файлов на S3 завершена"), 8000)
 

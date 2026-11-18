@@ -436,13 +436,80 @@ class WindowsS3DeletionTests(unittest.TestCase):
                 observed = win32event.WaitForSingleObject(handle, 5000)
             finally:
                 win32file.FindCloseChangeNotification(handle)
+            diagnostics = []
+            for logfile in sorted(self.folder.glob("rclone-*.log")):
+                lines = logfile.read_text(encoding="utf-8", errors="replace").splitlines()
+                diagnostics.extend(
+                    line for line in lines if "Experimental WinFsp Notify" in line
+                )
             self.assertEqual(
                 observed, win32event.WAIT_OBJECT_0,
                 "A successful directory deletion on the WinFsp mount did not "
-                "produce a Win32 directory-change notification within 5s",
+                "produce a Win32 directory-change notification within 5s. "
+                "Patched rclone diagnostics: " + repr(diagnostics[-10:]),
             )
             self.assertFalse(target.exists())
         self.assertEqual(self.remaining("notify-me/"), [])
+
+    def test_088_read_directory_changes_windows_notification(self):
+        """ReadDirectoryChangesW gives a second independent Win32 signal probe."""
+        import queue
+        import threading
+        import win32con
+        import win32file
+
+        self.seed("notify-via-read/child.txt")
+        with self.mounted(bucket=self.bucket) as root:
+            directory = root / "notify-via-read"
+            self.assertTrue(directory.is_dir())
+            handle = win32file.CreateFile(
+                str(root),
+                0x0001,  # FILE_LIST_DIRECTORY
+                (win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE |
+                 win32con.FILE_SHARE_DELETE),
+                None, win32con.OPEN_EXISTING,
+                win32con.FILE_FLAG_BACKUP_SEMANTICS, None,
+            )
+            results = queue.Queue()
+            started = threading.Event()
+
+            def reader():
+                started.set()
+                try:
+                    changes = win32file.ReadDirectoryChangesW(
+                        handle, 32768, False, win32con.FILE_NOTIFY_CHANGE_DIR_NAME,
+                    )
+                    results.put(changes)
+                except Exception as exc:
+                    results.put(exc)
+
+            thread = threading.Thread(target=reader, daemon=True)
+            try:
+                thread.start()
+                self.assertTrue(started.wait(2))
+                time.sleep(0.25)  # let the kernel register the watcher
+                shutil.rmtree(directory)
+                try:
+                    changes = results.get(timeout=5)
+                except queue.Empty:
+                    self.fail("ReadDirectoryChangesW returned no event within 5s")
+                if isinstance(changes, BaseException):
+                    self.fail(f"ReadDirectoryChangesW failed: {changes}")
+                self.assertTrue(
+                    any(
+                        action == 2 and name.lower() == "notify-via-read"
+                        for action, name in changes
+                    ),
+                    f"ReadDirectoryChangesW received unrelated events: {changes}",
+                )
+            finally:
+                try:
+                    win32file.CancelIoEx(handle, None)
+                except (OSError, AttributeError):
+                    pass
+                handle.Close()
+                thread.join(timeout=1)
+        self.assertEqual(self.remaining("notify-via-read/"), [])
 
     def test_09_real_windows_service_stops_via_authenticated_broker(self):
         """Real SCM + WinFsp rclone + VFS safety check + authenticated named pipe.

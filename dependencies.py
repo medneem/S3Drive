@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 
-WINFSP_INSTALLER = "winfsp-2.2.26215.msi"
+WINFSP_INSTALLER = "winfsp-2.2.26286.msi"
 
 
 def application_directory() -> Path:

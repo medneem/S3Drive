@@ -184,6 +184,31 @@ class StorageUsageTests(unittest.TestCase):
         self.assertNotIn("clear_logs.setEnabled(not active", code)
         self.assertIn("clear_logs.setEnabled(service in (None, SERVICE_STOPPED, SERVICE_RUNNING))", code)
 
+    def test_settings_show_separate_windows_service_log_location(self):
+        import inspect
+        from main import MainWindow
+        src = inspect.getsource(MainWindow.open_settings)
+        self.assertIn('tr("Каталог журналов Windows-служб:")', src)
+        self.assertIn('tr("Журнал выбранного подключения:")', src)
+        self.assertIn("service_logs_root()", src)
+        self.assertIn("profile_log_path(profile)", src)
+        handler = inspect.getsource(MainWindow.open_settings_location)
+        self.assertIn('destination == "services"', handler)
+        self.assertIn('destination == "selected-log"', handler)
+
+    def test_settings_open_selected_service_log_file_directly(self):
+        from unittest.mock import Mock
+        from main import MainWindow
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / "rclone.log"
+            log.write_text("line", encoding="utf-8")
+            p = profile(service=True)
+            ui = SimpleNamespace(selected_profile=lambda: p)
+            with patch("main.profile_log_path", return_value=log), \
+                 patch("main.os.startfile", create=True) as opener:
+                MainWindow.open_settings_location(ui, "selected-log")
+                opener.assert_called_once_with(str(log))
+
     def test_size_formatting_supports_both_languages_and_missing_data(self):
         from localization import set_language
         try:

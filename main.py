@@ -447,6 +447,14 @@ class MainWindow(QMainWindow):
         self.release_check_timer.timeout.connect(self.check_release_on_startup)
         QTimer.singleShot(0, self.check_release_on_startup)
 
+    def _status_notice(self, message: str, _timeout: int = 0) -> None:
+        """Keep transient messages in the existing connection-status area.
+
+        The bottom QStatusBar is reserved exclusively for a clickable rclone
+        error; do not make it visible for progress or informational messages.
+        """
+        self.status.setText(message)
+
     def retranslate_ui(self) -> None:
         """Update static widgets in-place; never interrupt a mounted drive."""
         self.header_title.setText(tr("S3Drive — подключение S3 как диска Windows"))
@@ -570,7 +578,7 @@ class MainWindow(QMainWindow):
         task = _ReleaseCheckTask()
         task.signals.checked.connect(self.on_release_checked)
         if manual:
-            self.statusBar().showMessage(tr("Проверка обновлений…"))
+            self._status_notice(tr("Проверка обновлений…"))
         self.update_pool.start(task)
 
     def on_release_checked(self, release: UpdateInfo | None, error: str) -> None:
@@ -579,7 +587,7 @@ class MainWindow(QMainWindow):
         self._manual_release_check = False
         self._release_check_running = False
         if error:
-            self.statusBar().showMessage(
+            self._status_notice(
                 tr("Не удалось проверить обновления: {error}", error=error)
             )
             if manual:
@@ -598,7 +606,7 @@ class MainWindow(QMainWindow):
         self.update_button.setToolTip(tr("Доступна S3Drive v{version}", version=release.version))
         self.update_button.setEnabled(True)
         self.update_button.setVisible(True)
-        self.statusBar().showMessage(
+        self._status_notice(
             tr("Доступна новая версия S3Drive v{version}. Нажмите «Обновить».", version=release.version)
         )
         if manual:
@@ -625,7 +633,7 @@ class MainWindow(QMainWindow):
             return
         percent = min(100, max(0, written * 100 // expected))
         self.update_button.setText(tr("Загрузка… {percent}%", percent=percent))
-        self.statusBar().showMessage(tr(
+        self._status_notice(tr(
             "Скачивание S3Drive v{version}… {percent}%",
             version=self.available_release.version, percent=percent
         ))
@@ -635,7 +643,7 @@ class MainWindow(QMainWindow):
         if not self._downloading_update or not self.available_release:
             return
         self.update_button.setText(tr("Проверка SHA-256…"))
-        self.statusBar().showMessage(tr(
+        self._status_notice(tr(
             "Проверка SHA-256 S3Drive v{version}…",
             version=self.available_release.version
         ))
@@ -649,7 +657,7 @@ class MainWindow(QMainWindow):
         self.update_button.setText(tr("Загрузка… {percent}%", percent=0))
         self.update_spinner.start(90)
         self._animate_update_spinner()
-        self.statusBar().showMessage(tr(
+        self._status_notice(tr(
             "Скачивание S3Drive v{version}… {percent}%",
             version=self.available_release.version, percent=0
         ))
@@ -1040,7 +1048,7 @@ class MainWindow(QMainWindow):
                 install_explorer_network_label(profile.id, profile.name)
                 self._applied_network_labels[profile.id] = profile.name
             except OSError as exc:
-                self.statusBar().showMessage(
+                self._status_notice(
                     tr("Не удалось обновить имя диска {drive}: {error}",
                        drive=profile.drive, error=exc),
                     8000,
@@ -1190,6 +1198,7 @@ class MainWindow(QMainWindow):
         if self.transfer_error_profile_id == profile_id:
             self.transfer_error_profile_id = None
             self.transfer_error_link.hide()
+            self.statusBar().hide()
 
     def _open_profile_logs(self, profile: Profile) -> bool:
         """Open a directory for user mounts, or the readable service log itself.
@@ -1242,7 +1251,7 @@ class MainWindow(QMainWindow):
         if snapshot is None:
             if error != self.monitor_last_error:
                 self.monitor_last_error = error
-                self.statusBar().showMessage(tr("Монитор загрузок: {error}", error=error[:170]), 12000)
+                self._status_notice(tr("Монитор загрузок: {error}", error=error[:170]), 12000)
             # Недостоверная статистика не должна скрывать уже открытую передачу.
             return
         self.monitor_last_error = ""
@@ -1272,10 +1281,12 @@ class MainWindow(QMainWindow):
             if snapshot.errors:
                 if self.error_notices.observe(profile_id, snapshot.errors):
                     self.transfer_error_profile_id = profile_id
+                    self.statusBar().clearMessage()
                     self.transfer_error_link.show()
+                    self.statusBar().show()
             elif profile_id in self.uploads_seen:
                 self.uploads_seen.discard(profile_id)
-                self.statusBar().showMessage(tr("S3Drive: загрузка файлов на S3 завершена"), 8000)
+                self._status_notice(tr("S3Drive: загрузка файлов на S3 завершена"), 8000)
 
     def update_status(self):
         profile = self.selected_profile()

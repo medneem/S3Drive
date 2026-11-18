@@ -6,7 +6,7 @@ English guide. Russian guide: README_SETUP_RU.txt
 2. Run S3Drive.exe as a normal user, NOT as administrator.
 3. S3Drive checks WinFsp automatically:
    - If the driver is missing, approve installation of the bundled
-     winfsp-2.2.26215.msi and Windows UAC.
+     winfsp-2.2.26286.msi and Windows UAC.
    - Complete installation, then start S3Drive.exe again.
    - Without WinFsp, Windows drives cannot be mounted.
 4. Create a connection with Endpoint, Access Key, Secret Key, drive letter,
@@ -68,7 +68,7 @@ A first-level folder in S3 account-root mode represents a real bucket.
 Deleting it may delete that bucket if permissions allow.
 Avoid placing live databases or active Git repositories on S3 drives.
 
-rclone.exe is already included. WinFsp 2026 Beta4 (v2.2B4) is a beta
+rclone.exe is already included. WinFsp 2026 Beta5 (v2.2B5) is a beta
 driver; monitor later WinFsp security and stability updates.
 A second S3Drive GUI instance in the same session is blocked.
 
@@ -87,7 +87,7 @@ S3Drive — первоначальная установка (Windows 10/11 x64)
 3. При запуске S3Drive автоматически проверит наличие WinFsp:
    - Если драйвер уже установлен, откроется основное окно.
    - Если драйвера нет, программа предложит запустить включённый в архив
-     winfsp-2.2.26215.msi. Нажмите «Да» и подтвердите UAC в Windows.
+     winfsp-2.2.26286.msi. Нажмите «Да» и подтвердите UAC в Windows.
    - После запуска MSI S3Drive закроется. Завершите установку WinFsp,
      затем запустите S3Drive.exe снова.
    - При отказе, отсутствии MSI или ошибке установки программа объяснит
@@ -144,7 +144,7 @@ Access Key и Secret Key сохраняются зашифрованными Win
 
 rclone.exe уже в этом архиве: отдельно скачивать и устанавливать его не нужно.
 
-WinFsp 2026 Beta4 (v2.2B4) — тестовая ветка со свежими исправлениями
+WinFsp 2026 Beta5 (v2.2B5) — тестовая ветка со свежими исправлениями
 безопасности. Проверяйте последующие обновления WinFsp.
 
 ВАЖНО: S3 — не NTFS. Перед отключением диска закройте все файлы и дождитесь

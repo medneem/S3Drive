@@ -282,6 +282,19 @@ def serve(stop_event) -> None:
                     reply = {"ok": False, "code": "RECONFIGURE", "error": str(exc)}
                 elif isinstance(exc, EnrollmentRequired):
                     reply = {"ok": False, "code": "ENROLL", "error": str(exc)}
+                elif isinstance(exc, pywintypes.error):
+                    # pywintypes.error is not an OSError subclass. In previous
+                    # versions SCM failures were hidden behind a generic dialog.
+                    # Send only Win32 error code and a sanitized API name;
+                    # never send unexpected exception text (could contain secrets).
+                    number = getattr(exc, "winerror", None)
+                    operation = getattr(exc, "funcname", None)
+                    if not isinstance(number, int) or not 0 < number <= 999999:
+                        number = "неизвестен"
+                    if not isinstance(operation, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", operation):
+                        operation = "Windows API"
+                    reply = {"ok": False, "code": "WIN32",
+                             "error": f"Ошибка Windows при управлении службой: код {number}, операция {operation}. Служба не отключена."}
                 elif isinstance(exc, (ValueError, PermissionError, RuntimeError,
                                       OSError, KeyError, TypeError)):
                     reply = {"ok": False, "code": "ERROR", "error": str(exc)[:500]}

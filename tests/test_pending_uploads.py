@@ -35,6 +35,33 @@ class PendingUploadTests(unittest.TestCase):
         )
         self.assertIn("--vfs-write-back 0s", cmd)
 
+    def test_named_bucket_does_not_issue_create_bucket(self):
+        """SILO keys may write to an existing bucket without CreateBucket rights."""
+        for bucket in ("users", "users/medneem/", "/users/medneem/"):
+            with self.subTest(bucket=bucket):
+                p = profile()
+                p.bucket = bucket
+                cmd = mount_command(p, "rclone.exe", Path("cache"), 33333)
+                self.assertEqual(cmd.count("--s3-no-check-bucket"), 1)
+                service = service_command(
+                    p, Path("C:/rclone.exe"), Path("C:/rclone.conf"),
+                    Path("C:/cache"), Path("C:/rclone.log"),
+                    Path("C:/rc.htpasswd"), 33333,
+                )
+                self.assertEqual(service.count("--s3-no-check-bucket"), 1)
+
+    def test_account_root_keeps_bucket_creation_behavior(self):
+        p = profile()
+        self.assertEqual(p.bucket, "")
+        cmd = mount_command(p, "rclone.exe", Path("cache"), 33333)
+        service = service_command(
+            p, Path("C:/rclone.exe"), Path("C:/rclone.conf"),
+            Path("C:/cache"), Path("C:/rclone.log"),
+            Path("C:/rc.htpasswd"), 33333,
+        )
+        self.assertNotIn("--s3-no-check-bucket", cmd)
+        self.assertNotIn("--s3-no-check-bucket", service)
+
     def test_service_stop_explains_actual_queued_unicode_names(self):
         name = "test/Bomfunk MC's – In Stereo [2000]/03 – Привет.flac"
         idle = {"diskCache": {

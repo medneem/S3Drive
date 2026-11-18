@@ -323,6 +323,23 @@ class ServiceTests(unittest.TestCase):
             for i in range(2):
                 self.assertEqual(acl.GetAce(i)[1], win32file.FILE_ALL_ACCESS)
 
+    def test_unreadable_winfsp_letter_is_still_occupied(self):
+        """Path.exists() can be false for a mounted but broken WinFsp drive."""
+        import ctypes
+        from windows_service import check_drive_free
+        with patch("pathlib.Path.exists", return_value=False), \
+             patch.object(ctypes.windll.kernel32, "GetLogicalDrives",
+                          return_value=1 << (ord("M") - ord("A"))):
+            with self.assertRaisesRegex(RuntimeError, "M:"):
+                check_drive_free("M:")
+
+    def test_new_drive_not_blocked_when_absent_from_windows_drive_mask(self):
+        import ctypes
+        from windows_service import check_drive_free
+        with patch("pathlib.Path.exists", return_value=False), \
+             patch.object(ctypes.windll.kernel32, "GetLogicalDrives", return_value=0):
+            check_drive_free("M:")
+
     def test_native_scm_create_start_stop_config_delete_without_sc_subprocess(self):
         import sys
         from unittest.mock import Mock

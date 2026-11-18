@@ -64,6 +64,32 @@ jobs:
             throw "WinFsp installer exit code: $($process.ExitCode)"
           }
 
+      # Test-only patched rclone; never published or copied into S3Drive ZIP.
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.0'
+          cache: false
+
+      - name: Build pinned rclone with experimental WinFsp RMDIR notification
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git clone --depth 1 --branch v1.76.0 https://github.com/rclone/rclone.git rclone-source
+          if ($LASTEXITCODE -ne 0) { throw "Failed to clone pinned rclone source" }
+          $commit = (git -C rclone-source rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $commit -ne "e982ff36668f5130d94b4f70409babb3d964df42") {
+            throw "Unexpected rclone v1.76.0 source commit: $commit"
+          }
+          python scripts/patch_rclone_notify_experiment.py rclone-source
+          if ($LASTEXITCODE -ne 0) { throw "Failed to patch expected upstream rclone sources" }
+          go -C rclone-source fmt ./cmd/cmount
+          if ($LASTEXITCODE -ne 0) { throw "Go fmt failed" }
+          go -C rclone-source build -tags cmount -trimpath -o ../tools/rclone.exe .
+          if ($LASTEXITCODE -ne 0) { throw "Experimental rclone build failed" }
+          & ./tools/rclone.exe version
+          if ($LASTEXITCODE -ne 0) { throw "Experimental rclone failed to start" }
+          Write-Host "Test-only patched rclone SHA256: $((Get-FileHash ./tools/rclone.exe -Algorithm SHA256).Hash)"
+
       # The integration suite also registers a disposable real Windows
       # rclone service and stops it through the authenticated control pipe.
       - name: Three real mount + S3 API deletion checks

@@ -266,7 +266,7 @@ class ServiceTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "1053") as caught:
                     install_and_start(profile, source)
             self.assertIn("rclone.log", str(caught.exception))
-            self.assertTrue((root / "services" / profile.id.replace("-", "") / "cache").exists())
+            self.assertTrue((root / "services" / profile.id / "cache").exists())
             self.assertEqual([call.args[0] for call in sc.call_args_list],
                              ["create", "start"])
             restore.assert_called_once_with(profile.id)

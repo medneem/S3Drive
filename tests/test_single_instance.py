@@ -2,6 +2,7 @@
 import os
 import subprocess
 import sys
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -34,7 +35,9 @@ class MutexTests(unittest.TestCase):
             instance.enable_activation()
             self.assertFalse(instance.activation_requested())
             self.assertTrue(instance.activation_requested())
-            kernel.CreateEventW.assert_called_once()
+            self.assertTrue(instance.acknowledge_activation())
+            self.assertEqual(kernel.CreateEventW.call_count, 2)
+            kernel.SetEvent.assert_called_once_with(456)
         kernel.CloseHandle.assert_any_call(456)
         kernel.CloseHandle.assert_any_call(123)
 
@@ -42,12 +45,26 @@ class MutexTests(unittest.TestCase):
         kernel = Mock()
         kernel.CreateMutexW.return_value = 123
         kernel.OpenEventW.return_value = 789
+        kernel.WaitForSingleObject.return_value = 0
         with SingleInstance(kernel32=kernel, get_last_error=lambda: 183) as instance:
             self.assertFalse(instance.acquired)
             self.assertTrue(instance.request_activation())
+        kernel.ResetEvent.assert_called_once_with(789)
         kernel.SetEvent.assert_called_once_with(789)
         kernel.CloseHandle.assert_any_call(789)
         kernel.CloseHandle.assert_any_call(123)
+
+    def test_duplicate_reports_unresponsive_gui_when_activation_is_not_acknowledged(self):
+        kernel = Mock()
+        kernel.CreateMutexW.return_value = 123
+        kernel.OpenEventW.side_effect = [456, 789]
+        kernel.WaitForSingleObject.return_value = 0x102
+        with SingleInstance(kernel32=kernel, get_last_error=lambda: 183) as instance:
+            self.assertFalse(instance.acquired)
+            self.assertFalse(instance.request_activation())
+        kernel.ResetEvent.assert_called_once_with(789)
+        kernel.SetEvent.assert_called_once_with(456)
+        kernel.WaitForSingleObject.assert_called_once_with(789, 2000)
 
     def test_duplicate_still_rejected_if_activation_event_missing(self):
         kernel = Mock()
@@ -103,13 +120,27 @@ class MutexTests(unittest.TestCase):
         with SingleInstance() as first:
             self.assertTrue(first.acquired)
             first.enable_activation()
-            output = subprocess.run(
-                [sys.executable, "-c", code], text=True, capture_output=True,
-                timeout=15, check=True,
+            child = subprocess.Popen(
+                [sys.executable, "-c", code], text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
-            self.assertEqual(output.stdout.strip(), "0 1")
-            self.assertTrue(first.activation_requested())
-            self.assertFalse(first.activation_requested())
+            try:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    if first.activation_requested():
+                        self.assertTrue(first.acknowledge_activation())
+                        break
+                    time.sleep(0.05)
+                else:
+                    self.fail("Child never requested activation")
+                stdout, stderr = child.communicate(timeout=15)
+                self.assertEqual(child.returncode, 0, stderr)
+                self.assertEqual(stdout.strip(), "0 1")
+                self.assertFalse(first.activation_requested())
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=5)
 
 
 class GUIStartupTests(unittest.TestCase):
@@ -117,6 +148,7 @@ class GUIStartupTests(unittest.TestCase):
         import main as desktop
         with patch.object(desktop, "SingleInstance") as guard:
             guard.return_value.__enter__.return_value.acquired = False
+            guard.return_value.__enter__.return_value.request_activation.return_value = True
             with patch.object(desktop, "QApplication"):
                 with patch.object(desktop, "startup_ready") as startup:
                     with patch.object(desktop, "MainWindow") as window:
@@ -124,7 +156,35 @@ class GUIStartupTests(unittest.TestCase):
                             self.assertEqual(desktop.main(), 0)
                             startup.assert_not_called()
                             window.assert_not_called()
-                            message.information.assert_called_once()
+                            message.information.assert_not_called()
+                            message.warning.assert_not_called()
+
+    def test_unresponsive_first_gui_shows_recovery_instructions(self):
+        import main as desktop
+        with patch.object(desktop, "SingleInstance") as guard:
+            current = guard.return_value.__enter__.return_value
+            current.acquired = False
+            current.request_activation.return_value = False
+            with patch.object(desktop, "QApplication"):
+                with patch.object(desktop, "MainWindow") as window:
+                    with patch.object(desktop, "QMessageBox") as message:
+                        self.assertEqual(desktop.main(), 0)
+                        window.assert_not_called()
+                        message.warning.assert_called_once()
+                        self.assertIn("S3Drive.exe", message.warning.call_args.args[2])
+
+    def test_gui_acknowledges_activation_only_after_restoring_window(self):
+        import main as desktop
+        gui = Mock()
+        gui._closing_for_update = False
+        instance = Mock()
+        instance.activation_requested.return_value = True
+        with patch.object(desktop, "QTimer") as timer:
+            desktop.MainWindow.bind_single_instance(gui, instance)
+            on_timeout = timer.return_value.timeout.connect.call_args.args[0]
+            on_timeout()
+        gui.activate_existing_window.assert_called_once()
+        instance.acknowledge_activation.assert_called_once()
 
     def test_old_tray_autostart_cleans_registry_without_opening_gui(self):
         import main as desktop
@@ -151,7 +211,7 @@ class GUIStartupTests(unittest.TestCase):
                         with patch.object(desktop, "app_icon"):
                             desktop.main()
                             window.assert_called_once()
-                            window.return_value.show.assert_called_once()
+                            window.return_value.activate_existing_window.assert_called_once()
                             app.return_value.exec.assert_called_once()
 
 

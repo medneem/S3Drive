@@ -15,7 +15,7 @@ from auto_update import (
     PAYLOAD_FILES, RELEASE_API, RELEASE_LATEST_PAGE, UpdateInfo, check_latest_release, launch_updater,
     parse_release, stage_update, verify_archive,
 )
-from update_helper import apply_bundle
+from update_helper import apply_bundle, launch_updated_gui
 
 
 def release(version="1.4.0", digest="a" * 64):
@@ -232,6 +232,25 @@ class ArchiveTests(unittest.TestCase):
 
 
 class InstallationTests(unittest.TestCase):
+    def test_updater_relaunches_gui_as_visible_window(self):
+        # A windowed PyInstaller updater must not propagate hidden STARTUPINFO.
+        start = Mock()
+        start.dwFlags = 0
+        start.wShowWindow = 0
+        spawn = Mock()
+        with patch("update_helper.subprocess.STARTUPINFO", return_value=start, create=True):
+            with patch("update_helper.subprocess.STARTF_USESHOWWINDOW", 1, create=True):
+                launch_updated_gui(Path("C:/S3Drive"), popen=spawn, windows=True)
+        self.assertEqual(start.dwFlags & 1, 1)
+        self.assertEqual(start.wShowWindow, 1)
+        self.assertEqual(spawn.call_args.kwargs["startupinfo"], start)
+        self.assertEqual(spawn.call_args.kwargs["cwd"], str(Path("C:/S3Drive")))
+
+    def test_non_windows_relaunch_does_not_require_win32_startupinfo(self):
+        spawn = Mock()
+        launch_updated_gui(Path("/tmp/S3Drive"), popen=spawn, windows=False)
+        self.assertNotIn("startupinfo", spawn.call_args.kwargs)
+
     @unittest.skipUnless(__import__("os").name == "nt", "Windows process wait")
     def test_parent_already_exited_is_not_an_update_failure(self):
         from update_helper import wait_for_parent_exit

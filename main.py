@@ -873,10 +873,14 @@ class MainWindow(QMainWindow):
     def bind_single_instance(self, instance: SingleInstance) -> None:
         """Listen only while the existing GUI is alive; never create another."""
         self.activation_timer = QTimer(self)
-        self.activation_timer.timeout.connect(
-            lambda: self.activate_existing_window()
-            if instance.activation_requested() else None
-        )
+        def on_activation_requested() -> None:
+            if not instance.activation_requested():
+                return
+            self.activate_existing_window()
+            if not self._closing_for_update:
+                instance.acknowledge_activation()
+
+        self.activation_timer.timeout.connect(on_activation_requested)
         self.activation_timer.start(250)
 
     def activate_existing_window(self) -> None:
@@ -887,6 +891,15 @@ class MainWindow(QMainWindow):
             self.showNormal()
         else:
             self.show()
+        # An updater-launched window can end up outside the currently
+        # connected monitors. Bring it back before raising or focusing it.
+        screens = QApplication.screens()
+        if screens and not any(
+            screen.availableGeometry().intersects(self.frameGeometry())
+            for screen in screens
+        ):
+            primary = QApplication.primaryScreen() or screens[0]
+            self.move(primary.availableGeometry().center() - self.rect().center())
         self.raise_()
         self.activateWindow()
 
@@ -1553,12 +1566,16 @@ def main() -> int:
         app = QApplication(sys.argv)
         set_language(read_language(config_path()))
         if not instance.acquired:
-            instance.request_activation()
-            QMessageBox.information(
-                None, "S3Drive уже запущен",
-                "S3Drive уже запущен. Закройте существующее окно программы, "
-                "прежде чем запускать другую копию.",
-            )
+            if not instance.request_activation():
+                QMessageBox.warning(
+                    None, "S3Drive уже запущен",
+                    "Процесс S3Drive.exe уже работает, но главное окно не "
+                    "ответило на запрос отображения. Возможно, запуск ещё "
+                    "выполняется или программа зависла.\n\n"
+                    "Если окно не появится, завершите только S3Drive.exe "
+                    "через Диспетчер задач и запустите программу снова. "
+                    "Работающие службы и подключённые S3-диски не трогайте.",
+                )
             return 0
         # Миграция: ранее S3Drive мог включить скрытый запуск из HKCU Run.
         # Удаляем только нашу прежнюю запись, ничего не добавляя в автозапуск.
@@ -1575,7 +1592,9 @@ def main() -> int:
         app.setApplicationName("S3Drive")
         app.setWindowIcon(app_icon())
         window = MainWindow()
-        window.show()
+        # Explicitly restore and raise the window, including when started
+        # from the separate (normally non-interactive) update helper.
+        window.activate_existing_window()
         try:
             instance.enable_activation()
             window.bind_single_instance(instance)

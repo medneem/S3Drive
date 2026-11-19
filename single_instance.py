@@ -13,8 +13,11 @@ from ctypes import wintypes
 # A kernel mutex is atomic across processes, including parallel launches.
 MUTEX_NAME = r"Local\S3Drive.Desktop.GUI"
 ACTIVATION_EVENT = r"Local\S3Drive.Desktop.Activate"
+ACTIVATION_ACK_EVENT = r"Local\S3Drive.Desktop.ActivateAck"
 ERROR_ALREADY_EXISTS = 183
 EVENT_MODIFY_STATE = 0x0002
+SYNCHRONIZE = 0x00100000
+ACTIVATION_TIMEOUT_MS = 2000
 WAIT_OBJECT_0 = 0
 WAIT_TIMEOUT = 0x102
 
@@ -33,6 +36,8 @@ def _windows_kernel32():
     kernel32.OpenEventW.restype = wintypes.HANDLE
     kernel32.SetEvent.argtypes = (wintypes.HANDLE,)
     kernel32.SetEvent.restype = wintypes.BOOL
+    kernel32.ResetEvent.argtypes = (wintypes.HANDLE,)
+    kernel32.ResetEvent.restype = wintypes.BOOL
     kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
     kernel32.WaitForSingleObject.restype = wintypes.DWORD
     kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
@@ -55,6 +60,7 @@ class SingleInstance:
         )
         self._handle = None
         self._activation_handle = None
+        self._ack_handle = None
         self.acquired = False
 
     def __enter__(self):
@@ -82,7 +88,16 @@ class SingleInstance:
             raise OSError(
                 self._get_last_error(), "Не удалось создать сигнал активации S3Drive."
             )
+        # The acknowledgement is signalled only *after* the GUI has restored
+        # its window. Without it a dead or hidden GUI looks like a success.
+        ack = self._kernel32.CreateEventW(None, False, False, ACTIVATION_ACK_EVENT)
+        if not ack:
+            self._kernel32.CloseHandle(handle)
+            raise OSError(
+                self._get_last_error(), "Не удалось создать подтверждение активации S3Drive."
+            )
         self._activation_handle = handle
+        self._ack_handle = ack
 
     def activation_requested(self) -> bool:
         """Consume a focus request without busy-waiting or starting a second UI."""
@@ -90,19 +105,45 @@ class SingleInstance:
             return False
         return self._kernel32.WaitForSingleObject(self._activation_handle, 0) == WAIT_OBJECT_0
 
+    def acknowledge_activation(self) -> bool:
+        """Confirm that the existing GUI processed the restore request."""
+        if not self.acquired or self._ack_handle is None:
+            return False
+        return bool(self._kernel32.SetEvent(self._ack_handle))
+
     def request_activation(self) -> bool:
-        """Ask the already-running GUI to restore its window (best effort)."""
+        """Wait briefly until the existing GUI actually processes restoration."""
         if self.acquired:
             return False
         handle = self._kernel32.OpenEventW(EVENT_MODIFY_STATE, False, ACTIVATION_EVENT)
         if not handle:
             return False
         try:
-            return bool(self._kernel32.SetEvent(handle))
+            ack = self._kernel32.OpenEventW(
+                EVENT_MODIFY_STATE | SYNCHRONIZE, False, ACTIVATION_ACK_EVENT
+            )
+            if not ack:
+                return False
+            try:
+                # Clear any previous reply; a stale auto-reset event must not
+                # be interpreted as a response to this launch.
+                if not self._kernel32.ResetEvent(ack):
+                    return False
+                if not self._kernel32.SetEvent(handle):
+                    return False
+                return (
+                    self._kernel32.WaitForSingleObject(ack, ACTIVATION_TIMEOUT_MS)
+                    == WAIT_OBJECT_0
+                )
+            finally:
+                self._kernel32.CloseHandle(ack)
         finally:
             self._kernel32.CloseHandle(handle)
 
     def close(self):
+        if self._ack_handle is not None:
+            handle, self._ack_handle = self._ack_handle, None
+            self._kernel32.CloseHandle(handle)
         if self._activation_handle is not None:
             handle, self._activation_handle = self._activation_handle, None
             self._kernel32.CloseHandle(handle)

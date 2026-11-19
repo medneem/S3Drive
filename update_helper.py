@@ -98,6 +98,22 @@ def apply_bundle(archive_path: Path, digest: str, version: str, root: Path) -> N
         shutil.rmtree(work, ignore_errors=True)
 
 
+def launch_updated_gui(
+    root: Path, *, popen=subprocess.Popen, windows: bool | None = None
+):
+    """Do not inherit a hidden window mode from the windowless updater."""
+    if windows is None:
+        windows = os.name == "nt"
+    options = {"cwd": str(root)}
+    if windows:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        # Win32 SW_SHOWNORMAL. Do not use SW_HIDE (0) on the GUI.
+        startupinfo.wShowWindow = 1
+        options["startupinfo"] = startupinfo
+    return popen([str(root / "S3Drive.exe")], **options)
+
+
 def _show_error(message: str) -> None:
     if os.name == "nt":
         ctypes.windll.user32.MessageBoxW(
@@ -120,7 +136,7 @@ def main() -> int:
         root = Path(args.destination).resolve()
         apply_bundle(Path(args.archive), args.sha256, args.version, root)
         # The updated GUI reads config.json in the same folder.
-        subprocess.Popen([str(root / "S3Drive.exe")], cwd=str(root))
+        launch_updated_gui(root)
         # Updating never modifies service files under ProgramData.
         try:
             Path(args.archive).unlink()

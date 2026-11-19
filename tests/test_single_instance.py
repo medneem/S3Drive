@@ -2,6 +2,7 @@
 import os
 import subprocess
 import sys
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -119,14 +120,27 @@ class MutexTests(unittest.TestCase):
         with SingleInstance() as first:
             self.assertTrue(first.acquired)
             first.enable_activation()
-            output = subprocess.run(
-                [sys.executable, "-c", code], text=True, capture_output=True,
-                timeout=15, check=True,
+            child = subprocess.Popen(
+                [sys.executable, "-c", code], text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
-            self.assertEqual(output.stdout.strip(), "0 1")
-            self.assertTrue(first.activation_requested())
-            self.assertTrue(first.acknowledge_activation())
-            self.assertFalse(first.activation_requested())
+            try:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    if first.activation_requested():
+                        self.assertTrue(first.acknowledge_activation())
+                        break
+                    time.sleep(0.05)
+                else:
+                    self.fail("Child never requested activation")
+                stdout, stderr = child.communicate(timeout=15)
+                self.assertEqual(child.returncode, 0, stderr)
+                self.assertEqual(stdout.strip(), "0 1")
+                self.assertFalse(first.activation_requested())
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=5)
 
 
 class GUIStartupTests(unittest.TestCase):
@@ -162,6 +176,7 @@ class GUIStartupTests(unittest.TestCase):
     def test_gui_acknowledges_activation_only_after_restoring_window(self):
         import main as desktop
         gui = Mock()
+        gui._closing_for_update = False
         instance = Mock()
         instance.activation_requested.return_value = True
         with patch.object(desktop, "QTimer") as timer:
@@ -196,7 +211,7 @@ class GUIStartupTests(unittest.TestCase):
                         with patch.object(desktop, "app_icon"):
                             desktop.main()
                             window.assert_called_once()
-                            window.return_value.show.assert_called_once()
+                            window.return_value.activate_existing_window.assert_called_once()
                             app.return_value.exec.assert_called_once()
 
 
